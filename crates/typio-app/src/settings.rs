@@ -9,7 +9,7 @@ use objc2_app_kit::{
     NSAlert, NSAlertFirstButtonReturn, NSApplication, NSBackingStoreType, NSBorderType, NSButton,
     NSColor, NSControlSize, NSControlStateValueOff, NSControlStateValueOn, NSFont, NSLineBreakMode,
     NSModalResponseOK, NSOpenPanel, NSPopUpButton, NSSavePanel, NSScrollView, NSTabView,
-    NSTabViewItem, NSTextAlignment, NSTextField, NSView, NSWindow, NSWindowStyleMask,
+    NSTabViewItem, NSTextAlignment, NSTextField, NSView, NSWindow, NSWindowStyleMask, NSWorkspace,
 };
 use objc2_foundation::{NSBundle, NSPoint, NSRect, NSSize, NSString, NSURL};
 
@@ -93,6 +93,16 @@ define_class!(
             }
         }
 
+        #[unsafe(method(openWebStore:))]
+        fn open_web_store(&self, _sender: Option<&AnyObject>) {
+            open_in_chrome(STORE_URL);
+        }
+
+        #[unsafe(method(openWebsite:))]
+        fn open_website(&self, _sender: Option<&AnyObject>) {
+            open_url(WEBSITE_URL);
+        }
+
         #[unsafe(method(changeLanguage:))]
         fn change_language(&self, sender: Option<&AnyObject>) {
             let Some(sender) = sender else { return };
@@ -174,8 +184,20 @@ impl SettingsTarget {
     }
 }
 
+const STORE_URL: &str =
+    "https://chromewebstore.google.com/detail/typio/ebndieeiallcbgjbhhkbgnegmfapagjf";
+const WEBSITE_URL: &str = "https://typio.thangdv.com/";
+const CHROME_ID: &str = "com.google.Chrome";
+/// Position of the Extension tab.
+pub const EXTENSION_TAB: isize = 3;
+
 /// Opens the Settings window, creating it the first time.
 pub fn show(mtm: MainThreadMarker) {
+    show_tab(mtm, None);
+}
+
+/// Opens the Settings window on tab `tab`, or on the tab it was on.
+pub fn show_tab(mtm: MainThreadMarker, tab: Option<isize>) {
     let Some(state) = with_app(|app| app.ui_state()) else {
         return;
     };
@@ -202,6 +224,9 @@ pub fn show(mtm: MainThreadMarker) {
             }
         });
         render(mtm, settings, &state);
+        if let (Some(tab), Some(tabs)) = (tab, settings.tabs.borrow().as_ref()) {
+            tabs.selectTabViewItemAtIndex(tab);
+        }
         NSApplication::sharedApplication(mtm).activate();
         settings.window.makeKeyAndOrderFront(None);
     });
@@ -231,6 +256,7 @@ fn render(mtm: MainThreadMarker, settings: &Settings, state: &UiState) {
         (tr(T::TabGeneral), general_page(mtm, state, target, page)),
         (tr(T::TabDatasets), datasets_page(mtm, state, target, page)),
         (tr(T::TabApps), apps_page(mtm, state, target, page)),
+        (tr(T::TabExtension), extension_page(mtm, target, page)),
     ] {
         let item = unsafe { NSTabViewItem::initWithIdentifier(NSTabViewItem::alloc(), None) };
         item.setLabel(&NSString::from_str(title));
@@ -543,6 +569,88 @@ fn apps_page(
         ),
     );
     view
+}
+
+fn extension_page(
+    mtm: MainThreadMarker,
+    target: &SettingsTarget,
+    page: NSSize,
+) -> Retained<FlippedView> {
+    let view = FlippedView::new(mtm, page);
+    let inner = page.width - PAGE_MARGIN * 2.0;
+    let about = secondary(
+        mtm,
+        tr(T::ExtensionAbout),
+        rect(PAGE_MARGIN, 14.0, inner, 48.0),
+    );
+    about.setLineBreakMode(NSLineBreakMode::ByWordWrapping);
+    about.setMaximumNumberOfLines(3);
+    add(&view, &about);
+
+    let mut top = 74.0;
+    for (number, step) in [
+        T::ExtensionStep1,
+        T::ExtensionStep2,
+        T::ExtensionStep3,
+        T::ExtensionStep4,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        add(
+            &view,
+            &label(
+                mtm,
+                &format!("{}.", number + 1),
+                rect(PAGE_MARGIN, top, 20.0, 18.0),
+            ),
+        );
+        let text = label(
+            mtm,
+            tr(step),
+            rect(PAGE_MARGIN + 22.0, top, inner - 22.0, 36.0),
+        );
+        text.setLineBreakMode(NSLineBreakMode::ByWordWrapping);
+        text.setMaximumNumberOfLines(2);
+        add(&view, &text);
+        top += 42.0;
+    }
+
+    let mut x = PAGE_MARGIN - 6.0;
+    for (title, action, width) in [
+        (tr(T::OpenWebStore), sel!(openWebStore:), 180.0),
+        (tr(T::OpenWebsite), sel!(openWebsite:), 160.0),
+        (tr(T::ExportBackup), sel!(exportBackup:), 130.0),
+    ] {
+        add(
+            &view,
+            &button(mtm, title, target, action, rect(x, top + 8.0, width, 32.0)),
+        );
+        x += width + 4.0;
+    }
+    add(
+        &view,
+        &secondary(mtm, WEBSITE_URL, rect(PAGE_MARGIN, top + 48.0, inner, 16.0)),
+    );
+    view
+}
+
+/// Opens `url` in Chrome when it is installed, since the Web Store installs into the
+/// browser that opens it; otherwise in the default browser.
+fn open_in_chrome(url: &str) {
+    let opened = std::process::Command::new("/usr/bin/open")
+        .args(["-b", CHROME_ID, url])
+        .status()
+        .is_ok_and(|status| status.success());
+    if !opened {
+        open_url(url);
+    }
+}
+
+fn open_url(url: &str) {
+    if let Some(url) = NSURL::URLWithString(&NSString::from_str(url)) {
+        NSWorkspace::sharedWorkspace().openURL(&url);
+    }
 }
 
 /// Asks for apps and adds each to the current mode's list.

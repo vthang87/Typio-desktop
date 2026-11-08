@@ -171,6 +171,20 @@ texts! {
     DeleteInfo => "Its values and shortcuts are removed from Typio. This cannot be undone.",
         "Các giá trị và gõ tắt của bộ dữ liệu này sẽ bị xoá khỏi Typio. Không thể hoàn tác.";
     CancelButton => "Cancel", "Huỷ";
+    TabExtension => "Extension", "Extension";
+    InstallExtension => "Install Chrome Extension…", "Cài extension Chrome…";
+    ExtensionAbout => "In Chrome, Edge, Brave and Arc the Typio extension gives the suggestions, so Typio Desktop skips those browsers. Install the extension to use Typio there.",
+        "Trong Chrome, Edge, Brave và Arc, extension Typio lo phần gợi ý nên Typio Desktop bỏ qua các trình duyệt này. Hãy cài extension để dùng Typio ở đó.";
+    ExtensionStep1 => "Click Open Chrome Web Store, or open the Typio website.",
+        "Bấm Mở Chrome Web Store, hoặc mở trang web Typio.";
+    ExtensionStep2 => "Click Add to Chrome, then Add extension.",
+        "Bấm Thêm vào Chrome, rồi chọn Thêm tiện ích.";
+    ExtensionStep3 => "Click the puzzle icon in the toolbar and pin Typio.",
+        "Bấm biểu tượng mảnh ghép trên thanh công cụ rồi ghim Typio.";
+    ExtensionStep4 => "To use the same data, click Export Backup… here, then import that file in the extension's settings.",
+        "Để dùng chung dữ liệu, bấm Xuất sao lưu… ở đây rồi nhập file đó trong phần cài đặt của extension.";
+    OpenWebStore => "Open Chrome Web Store", "Mở Chrome Web Store";
+    OpenWebsite => "Open Typio Website", "Mở trang web Typio";
     ShortcutCount => "{count} shortcuts", "{count} gõ tắt";
     ValueCount => "{count} values", "{count} giá trị";
 

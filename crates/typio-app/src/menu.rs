@@ -60,6 +60,11 @@ define_class!(
             import_datasets(self.mtm());
         }
 
+        #[unsafe(method(openExtensionGuide:))]
+        fn open_extension_guide(&self, _sender: Option<&AnyObject>) {
+            crate::settings::show_tab(self.mtm(), Some(crate::settings::EXTENSION_TAB));
+        }
+
         #[unsafe(method(openSettings:))]
         fn open_settings(&self, _sender: Option<&AnyObject>) {
             crate::settings::show(self.mtm());
@@ -175,6 +180,11 @@ impl MenuTarget {
         }
         menu.addItem(&self.item(mtm, tr(T::ImportDataset), Some(sel!(importDataset:))));
         menu.addItem(&NSMenuItem::separatorItem(mtm));
+        menu.addItem(&self.item(
+            mtm,
+            tr(T::InstallExtension),
+            Some(sel!(openExtensionGuide:)),
+        ));
         let settings = self.item(mtm, tr(T::SettingsItem), Some(sel!(openSettings:)));
         settings.setKeyEquivalent(&NSString::from_str(","));
         menu.addItem(&settings);
