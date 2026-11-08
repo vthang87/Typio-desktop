@@ -134,6 +134,7 @@ fn key_for(code: i64) -> Key {
         53 => Key::Escape,
         17 => Key::T,
         49 => Key::Space,
+        51 => Key::Backspace,
         _ => Key::Other,
     }
 }

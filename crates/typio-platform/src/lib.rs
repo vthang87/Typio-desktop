@@ -67,6 +67,8 @@ pub enum Key {
     T,
     /// The space bar, used by the Quick Search shortcut.
     Space,
+    /// Delete (backspace), which undoes an expansion right after it.
+    Backspace,
     Other,
 }
 

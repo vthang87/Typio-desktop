@@ -3,7 +3,7 @@
 //! slower Accessibility work right after.
 
 use std::cell::RefCell;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use dispatch2::{DispatchQueue, DispatchTime};
 use objc2::MainThreadMarker;
@@ -17,6 +17,20 @@ use typio_platform::{
 use crate::palette::Palette;
 use crate::popup::Popup;
 use crate::store::{BlockedApp, Store};
+
+/// Some input methods send each key twice; extra Deletes this soon after an undo are
+/// dropped so they do not eat into the restored text.
+const UNDO_ECHO: Duration = Duration::from_millis(60);
+
+/// The last expansion, which Delete right after it undoes.
+struct Expansion {
+    pid: i32,
+    /// UTF-16 offset where the inserted text starts.
+    start: usize,
+    inserted: String,
+    /// What it replaced, such as `:xtt`.
+    original: String,
+}
 
 /// Lets an input method finish rewriting the text before Typio reads it.
 const REFRESH_DELAY: Duration = Duration::from_millis(40);
@@ -62,6 +76,9 @@ pub struct App {
     pub store: Store,
     popup: Popup,
     palette: Palette,
+    last_expansion: Option<Expansion>,
+    /// Until when extra Deletes after an undo are dropped.
+    undo_echo_until: Option<Instant>,
     /// The field Quick Search inserts into, read when it opened.
     palette_target: Option<Field>,
     tap: Option<EventTap>,
@@ -85,6 +102,8 @@ pub fn install(store: Store, mtm: MainThreadMarker) {
         popup: Popup::new(mtm),
         palette: Palette::new(mtm),
         palette_target: None,
+        last_expansion: None,
+        undo_echo_until: None,
         tap: None,
         field: None,
         word: None,
@@ -170,6 +189,25 @@ impl App {
 
     /// Decides synchronously whether the tap swallows `event`.
     fn handle(&mut self, event: InputEvent) -> Disposition {
+        let plain_delete = matches!(
+            event,
+            InputEvent::KeyDown { key: Key::Backspace, modifiers }
+                if !modifiers.command && !modifiers.control && !modifiers.option
+        );
+        if plain_delete
+            && self
+                .undo_echo_until
+                .is_some_and(|until| Instant::now() < until)
+        {
+            return Disposition::Swallow;
+        }
+        self.undo_echo_until = None;
+        // Only the very next key can undo an expansion.
+        if let Some(expansion) = self.last_expansion.take() {
+            if plain_delete && !self.popup.is_visible() && self.undo(expansion) {
+                return Disposition::Swallow;
+            }
+        }
         match event {
             InputEvent::KeyDown {
                 key: Key::T,
@@ -422,14 +460,51 @@ impl App {
         ) else {
             return;
         };
-        // The colon and the word after it become the chosen text.
+        // The trigger and the word after it become the chosen text.
+        let original = utf16_slice(&field.info.value, word.start, word.end);
         if field
             .replace(word.start, word.end - word.start, &choice.value)
             .is_err()
         {
             self.show_message("Typio can’t type into this field", anchor_of(&field));
+        } else {
+            self.last_expansion = Some(Expansion {
+                pid: field.info.pid,
+                start: word.start,
+                inserted: choice.value.clone(),
+                original,
+            });
         }
         self.results.clear();
+    }
+
+    /// Puts back what `expansion` replaced when the inserted text still sits right before
+    /// the caret. Returns whether it did, so the Delete is swallowed.
+    fn undo(&mut self, expansion: Expansion) -> bool {
+        let Ok(field) = focused_field() else {
+            return false;
+        };
+        let length = expansion.inserted.encode_utf16().count();
+        let end = expansion.start + length;
+        let intact = field.info.pid == expansion.pid
+            && field.info.caret == Some(end)
+            && utf16_slice(&field.info.value, expansion.start, end) == expansion.inserted;
+        if !intact {
+            return false;
+        }
+        self.undo_echo_until = Some(Instant::now() + UNDO_ECHO);
+        let start = expansion.start;
+        let original = expansion.original;
+        // Write after the tap returns, as with any insertion.
+        later(Duration::ZERO, move |app| {
+            let Ok(field) = focused_field() else {
+                return;
+            };
+            if field.replace(start, length, &original).is_err() {
+                app.show_message("Typio can’t type into this field", anchor_of(&field));
+            }
+        });
+        true
     }
 
     pub fn ui_state(&self) -> UiState {
@@ -555,6 +630,12 @@ impl App {
             }
         });
     }
+}
+
+fn utf16_slice(text: &str, start: usize, end: usize) -> String {
+    let units: Vec<u16> = text.encode_utf16().collect();
+    let end = end.min(units.len());
+    String::from_utf16_lossy(&units[start.min(end)..end])
 }
 
 fn anchor_of(field: &Field) -> Option<Rect> {
