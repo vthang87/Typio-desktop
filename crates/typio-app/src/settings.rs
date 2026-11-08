@@ -8,14 +8,14 @@ use objc2::{define_class, msg_send, sel, AnyThread, MainThreadMarker, MainThread
 use objc2_app_kit::{
     NSAlert, NSAlertFirstButtonReturn, NSApplication, NSBackingStoreType, NSBorderType, NSButton,
     NSColor, NSControlSize, NSControlStateValueOff, NSControlStateValueOn, NSFont, NSLineBreakMode,
-    NSModalResponseOK, NSPopUpButton, NSSavePanel, NSScrollView, NSTabView, NSTabViewItem,
-    NSTextAlignment, NSTextField, NSView, NSWindow, NSWindowStyleMask,
+    NSModalResponseOK, NSOpenPanel, NSPopUpButton, NSSavePanel, NSScrollView, NSTabView,
+    NSTabViewItem, NSTextAlignment, NSTextField, NSView, NSWindow, NSWindowStyleMask,
 };
-use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
+use objc2_foundation::{NSBundle, NSPoint, NSRect, NSSize, NSString, NSURL};
 
 use crate::controller::{with_app, UiState};
 use crate::menu;
-use crate::store::TRIGGERS;
+use crate::store::{AppMode, TRIGGERS};
 
 const WIDTH: f64 = 580.0;
 const HEIGHT: f64 = 460.0;
@@ -118,11 +118,24 @@ define_class!(
             export_backup(self.mtm());
         }
 
-        #[unsafe(method(unblockApp:))]
-        fn unblock_app(&self, sender: Option<&AnyObject>) {
+        #[unsafe(method(removeApp:))]
+        fn remove_app(&self, sender: Option<&AnyObject>) {
             let Some(sender) = sender else { return };
             let index: isize = unsafe { msg_send![sender, tag] };
-            with_app(|app| app.unblock_app(index as usize));
+            with_app(|app| app.remove_app(index as usize));
+        }
+
+        #[unsafe(method(addApp:))]
+        fn add_app(&self, _sender: Option<&AnyObject>) {
+            add_apps(self.mtm());
+        }
+
+        #[unsafe(method(changeAppMode:))]
+        fn change_app_mode(&self, sender: Option<&AnyObject>) {
+            let Some(sender) = sender else { return };
+            let index: isize = unsafe { msg_send![sender, indexOfSelectedItem] };
+            let mode = if index == 1 { AppMode::Selected } else { AppMode::All };
+            with_app(|app| app.set_app_mode(mode));
         }
 
         #[unsafe(method(importDataset:))]
@@ -412,21 +425,52 @@ fn apps_page(
 ) -> Retained<FlippedView> {
     let view = FlippedView::new(mtm, page);
     let inner = page.width - PAGE_MARGIN * 2.0;
-    let intro = secondary(
-        mtm,
-        "Typio stays out of these apps. Browsers are listed so the Typio extension handles them. To add an app, open the Typio menu while using it and choose Turn Off in that app.",
-        rect(PAGE_MARGIN, 10.0, inner, 48.0),
+
+    add(
+        &view,
+        &label(mtm, "Typio runs in", rect(PAGE_MARGIN, 17.0, 100.0, 18.0)),
     );
+    let mode = NSPopUpButton::initWithFrame_pullsDown(
+        NSPopUpButton::alloc(mtm),
+        rect(PAGE_MARGIN + 100.0, 12.0, 240.0, 26.0),
+        false,
+    );
+    for title in ["All apps except skipped ones", "Only the selected apps"] {
+        mode.addItemWithTitle(&NSString::from_str(title));
+    }
+    mode.selectItemAtIndex(match state.app_mode {
+        AppMode::All => 0,
+        AppMode::Selected => 1,
+    });
+    unsafe {
+        mode.setTarget(Some(target));
+        mode.setAction(Some(sel!(changeAppMode:)));
+    }
+    add(&view, &mode);
+
+    let (about, empty) = match state.app_mode {
+        AppMode::All => (
+            "Skipped apps. Browsers start here so the Typio extension handles them. You can also skip the app in use from the Typio menu.",
+            "Typio runs in every app.",
+        ),
+        AppMode::Selected => (
+            "Selected apps. Typio runs only in these. You can also add the app in use from the Typio menu.",
+            "No apps selected yet, so Typio runs nowhere. Click Add App…",
+        ),
+    };
+    let intro = secondary(mtm, about, rect(PAGE_MARGIN, 48.0, inner, 32.0));
     intro.setLineBreakMode(NSLineBreakMode::ByWordWrapping);
-    intro.setMaximumNumberOfLines(3);
+    intro.setMaximumNumberOfLines(2);
     add(&view, &intro);
+
+    let list_height = page.height - 88.0 - 56.0;
     let list = list(
         mtm,
-        rect(PAGE_MARGIN, 64.0, inner, page.height - 64.0 - 16.0),
-        state.blocked_apps.len(),
-        "Typio runs in every app.",
+        rect(PAGE_MARGIN, 88.0, inner, list_height),
+        state.apps.len(),
+        empty,
         |list, index, top, width| {
-            let app = &state.blocked_apps[index];
+            let app = &state.apps[index];
             add(
                 list,
                 &label(mtm, &app.name, rect(12.0, top + 7.0, 200.0, 18.0)),
@@ -445,7 +489,7 @@ fn apps_page(
                     mtm,
                     "Remove",
                     target,
-                    sel!(unblockApp:),
+                    sel!(removeApp:),
                     index,
                     rect(width - 88.0, top + 4.0, 76.0, 24.0),
                 ),
@@ -453,7 +497,42 @@ fn apps_page(
         },
     );
     add(&view, &list);
+    add(
+        &view,
+        &button(
+            mtm,
+            "Add App…",
+            target,
+            sel!(addApp:),
+            rect(PAGE_MARGIN - 6.0, 88.0 + list_height + 12.0, 110.0, 32.0),
+        ),
+    );
     view
+}
+
+/// Asks for apps and adds each to the current mode's list.
+fn add_apps(mtm: MainThreadMarker) {
+    let panel = NSOpenPanel::openPanel(mtm);
+    panel.setAllowsMultipleSelection(true);
+    panel.setDirectoryURL(Some(&NSURL::fileURLWithPath(&NSString::from_str(
+        "/Applications",
+    ))));
+    panel.setMessage(Some(&NSString::from_str("Choose apps.")));
+    if panel.runModal() != NSModalResponseOK {
+        return;
+    }
+    for url in panel.URLs().iter() {
+        let Some(path) = url.path() else { continue };
+        let Some(id) = NSBundle::bundleWithPath(&path).and_then(|bundle| bundle.bundleIdentifier())
+        else {
+            continue;
+        };
+        let name = std::path::Path::new(&path.to_string())
+            .file_stem()
+            .map(|stem| stem.to_string_lossy().into_owned())
+            .unwrap_or_else(|| id.to_string());
+        with_app(|app| app.add_app(&id.to_string(), &name));
+    }
 }
 
 /// A scrolling list of `count` rows drawn by `row`, or `empty` when there are none.

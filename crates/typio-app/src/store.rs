@@ -27,10 +27,16 @@ pub struct Store {
     /// Ids of datasets that are kept but do not supply suggestions.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub disabled_datasets: Vec<String>,
-    /// Apps Typio stays out of. Browsers start here because the Typio extension handles
-    /// them.
+    /// Whether Typio runs in every app except `blocked_apps`, or only in `selected_apps`.
+    #[serde(default)]
+    pub app_mode: AppMode,
+    /// Apps skipped in `AppMode::All`. Browsers start here because the Typio extension
+    /// handles them.
     #[serde(default = "default_blocked_apps")]
-    pub blocked_apps: Vec<BlockedApp>,
+    pub blocked_apps: Vec<AppRef>,
+    /// The only apps Typio runs in under `AppMode::Selected`.
+    #[serde(default)]
+    pub selected_apps: Vec<AppRef>,
     /// Typed before a word to bring up suggestions, as in `:xtt`.
     #[serde(default = "default_trigger")]
     pub trigger: char,
@@ -45,7 +51,9 @@ impl Default for Store {
             datasets: Vec::new(),
             enabled: true,
             disabled_datasets: Vec::new(),
+            app_mode: AppMode::All,
             blocked_apps: default_blocked_apps(),
+            selected_apps: Vec::new(),
             trigger: default_trigger(),
             path: PathBuf::new(),
         }
@@ -56,14 +64,24 @@ fn enabled_by_default() -> bool {
     true
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AppMode {
+    /// Every app except the skipped ones.
+    #[default]
+    All,
+    /// Only the selected apps.
+    Selected,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct BlockedApp {
+pub struct AppRef {
     /// Bundle identifier.
     pub id: String,
     pub name: String,
 }
 
-fn default_blocked_apps() -> Vec<BlockedApp> {
+fn default_blocked_apps() -> Vec<AppRef> {
     [
         ("com.google.Chrome", "Google Chrome"),
         ("com.microsoft.edgemac", "Microsoft Edge"),
@@ -71,7 +89,7 @@ fn default_blocked_apps() -> Vec<BlockedApp> {
         ("company.thebrowser.Browser", "Arc"),
     ]
     .into_iter()
-    .map(|(id, name)| BlockedApp {
+    .map(|(id, name)| AppRef {
         id: id.into(),
         name: name.into(),
     })
@@ -123,17 +141,49 @@ impl Store {
         fs::rename(temporary, &self.path)
     }
 
-    pub fn is_app_blocked(&self, id: &str) -> bool {
-        self.blocked_apps.iter().any(|app| app.id == id)
+    /// Whether Typio runs in the app with bundle identifier `id`.
+    pub fn runs_in(&self, id: &str) -> bool {
+        match self.app_mode {
+            AppMode::All => !self.is_listed(id),
+            AppMode::Selected => self.is_listed(id),
+        }
     }
 
-    pub fn set_app_blocked(&mut self, id: &str, name: &str, blocked: bool) {
-        self.blocked_apps.retain(|app| app.id != id);
-        if blocked {
-            self.blocked_apps.push(BlockedApp {
+    /// The list the current mode uses: skipped apps or selected apps.
+    pub fn app_list(&self) -> &[AppRef] {
+        match self.app_mode {
+            AppMode::All => &self.blocked_apps,
+            AppMode::Selected => &self.selected_apps,
+        }
+    }
+
+    fn app_list_mut(&mut self) -> &mut Vec<AppRef> {
+        match self.app_mode {
+            AppMode::All => &mut self.blocked_apps,
+            AppMode::Selected => &mut self.selected_apps,
+        }
+    }
+
+    pub fn is_listed(&self, id: &str) -> bool {
+        self.app_list().iter().any(|app| app.id == id)
+    }
+
+    /// Adds the app to, or removes it from, the current mode's list.
+    pub fn set_listed(&mut self, id: &str, name: &str, listed: bool) {
+        let list = self.app_list_mut();
+        list.retain(|app| app.id != id);
+        if listed {
+            list.push(AppRef {
                 id: id.into(),
                 name: name.into(),
             });
+        }
+    }
+
+    pub fn remove_listed(&mut self, index: usize) {
+        let list = self.app_list_mut();
+        if index < list.len() {
+            list.remove(index);
         }
     }
 
@@ -358,9 +408,10 @@ mod tests {
         assert!(store.enabled, "older files load turned on");
         assert_eq!(store.trigger, ':');
         assert!(
-            store.is_app_blocked("com.google.Chrome"),
-            "browsers start blocked"
+            !store.runs_in("com.google.Chrome"),
+            "browsers start skipped"
         );
+        assert!(store.runs_in("com.apple.Notes"));
         store.save().unwrap();
         let saved = fs::read_to_string(dir.join("data.json")).unwrap();
         assert!(!saved.contains("rules"), "old rules are dropped");
@@ -383,16 +434,31 @@ mod tests {
         assert_eq!(store.disabled_datasets, vec![first.clone()]);
         assert_eq!(store.enabled_datasets().count(), 1);
         store.trigger = '/';
-        store.set_app_blocked("com.google.Chrome", "Google Chrome", false);
-        store.set_app_blocked("com.apple.Notes", "Notes", true);
-        store.set_app_blocked("com.apple.Notes", "Notes", true);
+        store.set_listed("com.google.Chrome", "Google Chrome", false);
+        store.set_listed("com.apple.Notes", "Notes", true);
+        store.set_listed("com.apple.Notes", "Notes", true);
         assert_eq!(store.blocked_apps.len(), 4);
+        store.app_mode = AppMode::Selected;
+        assert!(!store.runs_in("com.apple.TextEdit"), "nothing selected yet");
+        store.set_listed("com.apple.TextEdit", "TextEdit", true);
+        assert!(store.runs_in("com.apple.TextEdit"));
+        assert!(
+            !store.runs_in("com.apple.Notes"),
+            "the skip list does not apply"
+        );
+        store.remove_listed(5);
+        store.remove_listed(0);
+        assert!(store.selected_apps.is_empty());
+        store.set_listed("com.apple.TextEdit", "TextEdit", true);
         store.save().unwrap();
 
         let mut loaded = Store::load(&dir).unwrap();
         assert!(!loaded.is_dataset_enabled(&first));
-        assert!(loaded.is_app_blocked("com.apple.Notes"));
-        assert!(!loaded.is_app_blocked("com.google.Chrome"));
+        assert_eq!(loaded.app_mode, AppMode::Selected);
+        assert!(loaded.runs_in("com.apple.TextEdit"));
+        loaded.app_mode = AppMode::All;
+        assert!(!loaded.runs_in("com.apple.Notes"));
+        assert!(loaded.runs_in("com.google.Chrome"));
         assert_eq!(loaded.trigger, '/');
         loaded.remove_dataset(&first);
         assert_eq!(loaded.datasets.len(), 1);
