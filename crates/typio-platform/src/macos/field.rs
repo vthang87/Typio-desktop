@@ -190,6 +190,14 @@ fn caret_rect(element: &Element, caret: usize) -> Option<Rect> {
         })
 }
 
+/// The bundle identifier and name of the app in front.
+pub fn frontmost_app() -> Option<(String, String)> {
+    let pid = NSWorkspace::sharedWorkspace()
+        .frontmostApplication()?
+        .processIdentifier();
+    Some(app_identity(pid))
+}
+
 fn app_identity(pid: i32) -> (String, String) {
     let Some(app) = NSRunningApplication::runningApplicationWithProcessIdentifier(pid) else {
         return (format!("pid:{pid}"), String::new());

@@ -1,15 +1,14 @@
-//! The Settings window: the on/off switch, the trigger character, Accessibility access and
-//! the datasets. Its content is rebuilt from `UiState` whenever anything changes.
+//! The Settings window: General (on/off, trigger, Accessibility), Datasets and Apps tabs. Its content is rebuilt from `UiState` whenever anything changes.
 
 use std::cell::RefCell;
 
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, NSObject, NSObjectProtocol, Sel};
-use objc2::{define_class, msg_send, sel, MainThreadMarker, MainThreadOnly};
+use objc2::{define_class, msg_send, sel, AnyThread, MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::{
-    NSAlert, NSAlertFirstButtonReturn, NSApplication, NSBackingStoreType, NSBorderType, NSBox,
-    NSBoxType, NSButton, NSColor, NSControlSize, NSControlStateValueOff, NSControlStateValueOn,
-    NSFont, NSLineBreakMode, NSPopUpButton, NSScrollView, NSTextAlignment, NSTextField, NSView,
+    NSAlert, NSAlertFirstButtonReturn, NSApplication, NSBackingStoreType, NSBorderType, NSButton,
+    NSColor, NSControlSize, NSControlStateValueOff, NSControlStateValueOn, NSFont, NSLineBreakMode,
+    NSPopUpButton, NSScrollView, NSTabView, NSTabViewItem, NSTextAlignment, NSTextField, NSView,
     NSWindow, NSWindowStyleMask,
 };
 use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
@@ -18,11 +17,9 @@ use crate::controller::{with_app, UiState};
 use crate::menu;
 use crate::store::TRIGGERS;
 
-const WIDTH: f64 = 520.0;
-const HEIGHT: f64 = 474.0;
-const MARGIN: f64 = 20.0;
-const LIST_TOP: f64 = 184.0;
-const LIST_HEIGHT: f64 = 230.0;
+const WIDTH: f64 = 580.0;
+const HEIGHT: f64 = 460.0;
+const PAGE_MARGIN: f64 = 16.0;
 const ROW_HEIGHT: f64 = 32.0;
 
 thread_local! {
@@ -32,6 +29,7 @@ thread_local! {
 struct Settings {
     window: Retained<NSWindow>,
     target: Retained<SettingsTarget>,
+    tabs: RefCell<Option<Retained<NSTabView>>>,
 }
 
 define_class!(
@@ -103,6 +101,13 @@ define_class!(
             }
         }
 
+        #[unsafe(method(unblockApp:))]
+        fn unblock_app(&self, sender: Option<&AnyObject>) {
+            let Some(sender) = sender else { return };
+            let index: isize = unsafe { msg_send![sender, tag] };
+            with_app(|app| app.unblock_app(index as usize));
+        }
+
         #[unsafe(method(importDataset:))]
         fn import_dataset(&self, _sender: Option<&AnyObject>) {
             menu::import_datasets(self.mtm());
@@ -153,6 +158,7 @@ pub fn show(mtm: MainThreadMarker) {
             Settings {
                 window,
                 target: SettingsTarget::new(mtm),
+                tabs: RefCell::new(None),
             }
         });
         render(mtm, settings, &state);
@@ -173,26 +179,63 @@ pub fn update(mtm: MainThreadMarker, state: &UiState) {
 fn render(mtm: MainThreadMarker, settings: &Settings, state: &UiState) {
     let target = &*settings.target;
     let content = FlippedView::new(mtm, NSSize::new(WIDTH, HEIGHT));
-    let inner = WIDTH - MARGIN * 2.0;
-
-    add(&content, &heading(mtm, "General", MARGIN, 18.0));
-    let enable = checkbox(
-        mtm,
-        "Enable Typio in all text fields   ⌃⌥T",
-        state.enabled,
-        target,
-        sel!(toggleEnabled:),
-        rect(MARGIN, 44.0, inner, 20.0),
+    let tabs = NSTabView::initWithFrame(
+        NSTabView::alloc(mtm),
+        rect(12.0, 10.0, WIDTH - 24.0, HEIGHT - 22.0),
     );
-    add(&content, &enable);
+    let page = tabs.contentRect().size;
+    for (title, view) in [
+        ("General", general_page(mtm, state, target, page)),
+        ("Datasets", datasets_page(mtm, state, target, page)),
+        ("Apps", apps_page(mtm, state, target, page)),
+    ] {
+        let item = unsafe { NSTabViewItem::initWithIdentifier(NSTabViewItem::alloc(), None) };
+        item.setLabel(&NSString::from_str(title));
+        item.setView(Some(&view));
+        tabs.addTabViewItem(&item);
+    }
+    // Keep the tab the user is on across redraws.
+    let selected = settings.tabs.borrow().as_ref().map_or(0, |old| {
+        old.selectedTabViewItem()
+            .map_or(0, |item| old.indexOfTabViewItem(&item))
+    });
+    tabs.selectTabViewItemAtIndex(selected.max(0));
+    add(&content, &tabs);
+    settings.window.setContentView(Some(&content));
+    *settings.tabs.borrow_mut() = Some(tabs);
+}
+
+fn general_page(
+    mtm: MainThreadMarker,
+    state: &UiState,
+    target: &SettingsTarget,
+    page: NSSize,
+) -> Retained<FlippedView> {
+    let view = FlippedView::new(mtm, page);
+    let inner = page.width - PAGE_MARGIN * 2.0;
+    add(
+        &view,
+        &checkbox(
+            mtm,
+            "Enable Typio in all text fields   ⌃⌥T",
+            state.enabled,
+            target,
+            sel!(toggleEnabled:),
+            rect(PAGE_MARGIN, 16.0, inner, 20.0),
+        ),
+    );
 
     add(
-        &content,
-        &label(mtm, "Trigger character", rect(MARGIN, 79.0, 130.0, 18.0)),
+        &view,
+        &label(
+            mtm,
+            "Trigger character",
+            rect(PAGE_MARGIN, 53.0, 130.0, 18.0),
+        ),
     );
     let trigger = NSPopUpButton::initWithFrame_pullsDown(
         NSPopUpButton::alloc(mtm),
-        rect(MARGIN + 130.0, 74.0, 64.0, 26.0),
+        rect(PAGE_MARGIN + 130.0, 48.0, 64.0, 26.0),
         false,
     );
     for character in TRIGGERS {
@@ -208,13 +251,13 @@ fn render(mtm: MainThreadMarker, settings: &Settings, state: &UiState) {
         trigger.setTarget(Some(target));
         trigger.setAction(Some(sel!(changeTrigger:)));
     }
-    add(&content, &trigger);
+    add(&view, &trigger);
     add(
-        &content,
+        &view,
         &secondary(
             mtm,
             &format!("Type {}xtt to see suggestions for xtt", state.trigger),
-            rect(MARGIN + 204.0, 80.0, inner - 204.0, 16.0),
+            rect(PAGE_MARGIN + 204.0, 54.0, inner - 204.0, 16.0),
         ),
     );
 
@@ -224,124 +267,196 @@ fn render(mtm: MainThreadMarker, settings: &Settings, state: &UiState) {
         "Accessibility access: not granted"
     };
     add(
-        &content,
-        &label(mtm, access, rect(MARGIN, 114.0, 240.0, 18.0)),
+        &view,
+        &label(mtm, access, rect(PAGE_MARGIN, 92.0, 240.0, 18.0)),
     );
     if !state.trusted {
         add(
-            &content,
+            &view,
             &button(
                 mtm,
                 "Open Accessibility Settings…",
                 target,
                 sel!(openAccessibilitySettings:),
-                rect(WIDTH - MARGIN - 230.0, 108.0, 230.0, 28.0),
+                rect(page.width - PAGE_MARGIN - 230.0, 86.0, 230.0, 28.0),
             ),
         );
     }
-
-    let separator = NSBox::new(mtm);
-    separator.setBoxType(NSBoxType::Separator);
-    separator.setFrame(rect(MARGIN, 146.0, inner, 1.0));
-    add(&content, &separator);
-
-    add(&content, &heading(mtm, "Datasets", MARGIN, 158.0));
-    let hint = secondary(
-        mtm,
-        "Only checked datasets give suggestions",
-        rect(WIDTH - MARGIN - 260.0, 161.0, 260.0, 16.0),
-    );
-    hint.setAlignment(NSTextAlignment::Right);
-    add(&content, &hint);
-    add(&content, &dataset_list(mtm, state, target, inner));
-
-    let buttons_top = LIST_TOP + LIST_HEIGHT + 12.0;
-    add(
-        &content,
-        &button(
-            mtm,
-            "Import…",
-            target,
-            sel!(importDataset:),
-            rect(MARGIN - 6.0, buttons_top, 110.0, 32.0),
-        ),
-    );
-    add(
-        &content,
-        &button(
-            mtm,
-            "Open Data Folder",
-            target,
-            sel!(openDataFolder:),
-            rect(MARGIN + 104.0, buttons_top, 160.0, 32.0),
-        ),
-    );
-
-    settings.window.setContentView(Some(&content));
+    view
 }
 
-fn dataset_list(
+fn datasets_page(
     mtm: MainThreadMarker,
     state: &UiState,
     target: &SettingsTarget,
-    width: f64,
-) -> Retained<NSScrollView> {
-    let scroll = NSScrollView::initWithFrame(
-        NSScrollView::alloc(mtm),
-        rect(MARGIN, LIST_TOP, width, LIST_HEIGHT),
+    page: NSSize,
+) -> Retained<FlippedView> {
+    let view = FlippedView::new(mtm, page);
+    let inner = page.width - PAGE_MARGIN * 2.0;
+    add(
+        &view,
+        &secondary(
+            mtm,
+            "Only checked datasets give suggestions.",
+            rect(PAGE_MARGIN, 12.0, inner, 16.0),
+        ),
     );
+    let list_height = page.height - 36.0 - 56.0;
+    let list = list(
+        mtm,
+        rect(PAGE_MARGIN, 36.0, inner, list_height),
+        state.datasets.len(),
+        "No datasets yet. Click Import… to add a TXT, CSV or JSON file.",
+        |list, index, top, width| {
+            let dataset = &state.datasets[index];
+            let enable = checkbox(
+                mtm,
+                &dataset.name,
+                dataset.enabled,
+                target,
+                sel!(toggleDataset:),
+                rect(12.0, top + 6.0, width - 250.0, 20.0),
+            );
+            enable.setTag(index as isize);
+            enable.setLineBreakMode(NSLineBreakMode::ByTruncatingTail);
+            add(list, &enable);
+
+            let detail = secondary(
+                mtm,
+                &dataset.detail,
+                rect(width - 230.0, top + 8.0, 130.0, 16.0),
+            );
+            detail.setAlignment(NSTextAlignment::Right);
+            add(list, &detail);
+
+            add(
+                list,
+                &small_button(
+                    mtm,
+                    "Delete",
+                    target,
+                    sel!(deleteDataset:),
+                    index,
+                    rect(width - 88.0, top + 4.0, 76.0, 24.0),
+                ),
+            );
+        },
+    );
+    add(&view, &list);
+
+    let buttons_top = 36.0 + list_height + 12.0;
+    let mut x = PAGE_MARGIN - 6.0;
+    for (title, action, width) in [
+        ("Import…", sel!(importDataset:), 100.0),
+        ("Open Data Folder", sel!(openDataFolder:), 150.0),
+    ] {
+        add(
+            &view,
+            &button(
+                mtm,
+                title,
+                target,
+                action,
+                rect(x, buttons_top, width, 32.0),
+            ),
+        );
+        x += width + 4.0;
+    }
+    view
+}
+
+fn apps_page(
+    mtm: MainThreadMarker,
+    state: &UiState,
+    target: &SettingsTarget,
+    page: NSSize,
+) -> Retained<FlippedView> {
+    let view = FlippedView::new(mtm, page);
+    let inner = page.width - PAGE_MARGIN * 2.0;
+    let intro = secondary(
+        mtm,
+        "Typio stays out of these apps. Browsers are listed so the Typio extension handles them. To add an app, open the Typio menu while using it and choose Turn Off in that app.",
+        rect(PAGE_MARGIN, 10.0, inner, 48.0),
+    );
+    intro.setLineBreakMode(NSLineBreakMode::ByWordWrapping);
+    intro.setMaximumNumberOfLines(3);
+    add(&view, &intro);
+    let list = list(
+        mtm,
+        rect(PAGE_MARGIN, 64.0, inner, page.height - 64.0 - 16.0),
+        state.blocked_apps.len(),
+        "Typio runs in every app.",
+        |list, index, top, width| {
+            let app = &state.blocked_apps[index];
+            add(
+                list,
+                &label(mtm, &app.name, rect(12.0, top + 7.0, 200.0, 18.0)),
+            );
+            add(
+                list,
+                &secondary(
+                    mtm,
+                    &app.id,
+                    rect(216.0, top + 8.0, width - 216.0 - 100.0, 16.0),
+                ),
+            );
+            add(
+                list,
+                &small_button(
+                    mtm,
+                    "Remove",
+                    target,
+                    sel!(unblockApp:),
+                    index,
+                    rect(width - 88.0, top + 4.0, 76.0, 24.0),
+                ),
+            );
+        },
+    );
+    add(&view, &list);
+    view
+}
+
+/// A scrolling list of `count` rows drawn by `row`, or `empty` when there are none.
+fn list(
+    mtm: MainThreadMarker,
+    frame: NSRect,
+    count: usize,
+    empty: &str,
+    row: impl Fn(&FlippedView, usize, f64, f64),
+) -> Retained<NSScrollView> {
+    let scroll = NSScrollView::initWithFrame(NSScrollView::alloc(mtm), frame);
     scroll.setBorderType(NSBorderType::BezelBorder);
     scroll.setHasVerticalScroller(true);
     let width = scroll.contentSize().width;
-    let height = (state.datasets.len() as f64 * ROW_HEIGHT).max(scroll.contentSize().height);
-    let list = FlippedView::new(mtm, NSSize::new(width, height));
-
-    if state.datasets.is_empty() {
+    let height = (count as f64 * ROW_HEIGHT).max(scroll.contentSize().height);
+    let view = FlippedView::new(mtm, NSSize::new(width, height));
+    if count == 0 {
         add(
-            &list,
-            &secondary(
-                mtm,
-                "No datasets yet. Click Import… to add a TXT, CSV or JSON file.",
-                rect(12.0, 12.0, width - 24.0, 16.0),
-            ),
+            &view,
+            &secondary(mtm, empty, rect(12.0, 12.0, width - 24.0, 16.0)),
         );
     }
-    for (index, dataset) in state.datasets.iter().enumerate() {
-        let top = index as f64 * ROW_HEIGHT;
-        let enable = checkbox(
-            mtm,
-            &dataset.name,
-            dataset.enabled,
-            target,
-            sel!(toggleDataset:),
-            rect(12.0, top + 6.0, width - 250.0, 20.0),
-        );
-        enable.setTag(index as isize);
-        enable.setLineBreakMode(NSLineBreakMode::ByTruncatingTail);
-        add(&list, &enable);
-
-        let detail = secondary(
-            mtm,
-            &dataset.detail,
-            rect(width - 230.0, top + 8.0, 130.0, 16.0),
-        );
-        detail.setAlignment(NSTextAlignment::Right);
-        add(&list, &detail);
-
-        let delete = button(
-            mtm,
-            "Delete",
-            target,
-            sel!(deleteDataset:),
-            rect(width - 88.0, top + 4.0, 76.0, 24.0),
-        );
-        delete.setControlSize(NSControlSize::Small);
-        delete.setFont(Some(&NSFont::systemFontOfSize(11.0)));
-        delete.setTag(index as isize);
-        add(&list, &delete);
+    for index in 0..count {
+        row(&view, index, index as f64 * ROW_HEIGHT, width);
     }
-    scroll.setDocumentView(Some(&list));
+    scroll.setDocumentView(Some(&view));
     scroll
+}
+
+fn small_button(
+    mtm: MainThreadMarker,
+    title: &str,
+    target: &SettingsTarget,
+    action: Sel,
+    tag: usize,
+    frame: NSRect,
+) -> Retained<NSButton> {
+    let button = button(mtm, title, target, action, frame);
+    button.setControlSize(NSControlSize::Small);
+    button.setFont(Some(&NSFont::systemFontOfSize(11.0)));
+    button.setTag(tag as isize);
+    button
 }
 
 fn confirm_delete(mtm: MainThreadMarker, name: &str) -> bool {
@@ -368,12 +483,6 @@ fn label(mtm: MainThreadMarker, text: &str, frame: NSRect) -> Retained<NSTextFie
     let label = NSTextField::labelWithString(&NSString::from_str(text), mtm);
     label.setFrame(frame);
     label
-}
-
-fn heading(mtm: MainThreadMarker, text: &str, x: f64, y: f64) -> Retained<NSTextField> {
-    let heading = label(mtm, text, rect(x, y, 200.0, 18.0));
-    heading.setFont(Some(&NSFont::boldSystemFontOfSize(13.0)));
-    heading
 }
 
 fn secondary(mtm: MainThreadMarker, text: &str, frame: NSRect) -> Retained<NSTextField> {

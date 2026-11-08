@@ -10,10 +10,12 @@ use objc2::MainThreadMarker;
 use typio_core::engine::{prefixed_word_at, Suggester, WordRange};
 use typio_core::sensitive::is_sensitive_label;
 use typio_core::{DatasetKind, RankedSuggestion};
-use typio_platform::{focused_field, Disposition, EventTap, Field, InputEvent, Key, Rect};
+use typio_platform::{
+    focused_field, frontmost_app, Disposition, EventTap, Field, InputEvent, Key, Rect,
+};
 
 use crate::popup::Popup;
-use crate::store::Store;
+use crate::store::{BlockedApp, Store};
 
 /// Lets an input method finish rewriting the text before Typio reads it.
 const REFRESH_DELAY: Duration = Duration::from_millis(40);
@@ -30,6 +32,7 @@ pub struct UiState {
     pub enabled: bool,
     pub trigger: char,
     pub datasets: Vec<DatasetRow>,
+    pub blocked_apps: Vec<BlockedApp>,
 }
 
 pub struct DatasetRow {
@@ -252,7 +255,7 @@ impl App {
             }
         };
         let info = &field.info;
-        if !self.store.enabled || is_blocked(&field) {
+        if !self.store.enabled || is_blocked(&field) || self.store.is_app_blocked(&info.app_id) {
             debug!("refresh: {} {} is off or blocked", info.app_id, info.role);
             self.popup.hide();
             return;
@@ -339,6 +342,7 @@ impl App {
             enabled: self.store.enabled,
             trigger: self.store.trigger,
             datasets,
+            blocked_apps: self.store.blocked_apps.clone(),
         }
     }
 
@@ -367,6 +371,30 @@ impl App {
         };
         self.store.remove_dataset(&id);
         self.store_changed();
+    }
+
+    /// Blocks or unblocks the app in front (the menu), with a notice at the caret.
+    pub fn toggle_frontmost_app(&mut self) {
+        let Some((id, name)) = frontmost_app() else {
+            return;
+        };
+        let blocked = !self.store.is_app_blocked(&id);
+        self.store.set_app_blocked(&id, &name, blocked);
+        self.store_changed();
+        let message = if blocked {
+            format!("Typio off in {name}")
+        } else {
+            format!("Typio on in {name}")
+        };
+        let anchor = focused_field().ok().as_ref().and_then(anchor_of);
+        self.show_message(&message, anchor);
+    }
+
+    pub fn unblock_app(&mut self, index: usize) {
+        if index < self.store.blocked_apps.len() {
+            self.store.blocked_apps.remove(index);
+            self.store_changed();
+        }
     }
 
     pub fn set_trigger(&mut self, trigger: char) {

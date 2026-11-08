@@ -2,7 +2,7 @@ mod ax;
 mod field;
 mod tap;
 
-pub use field::{focused_field, Field, FocusError, InsertError};
+pub use field::{focused_field, frontmost_app, Field, FocusError, InsertError};
 pub use tap::EventTap;
 
 use objc2_application_services::{kAXTrustedCheckOptionPrompt, AXIsProcessTrustedWithOptions};
