@@ -1,0 +1,18 @@
+[package]
+name = "typio-app"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+humantime = "2.4.0"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+typio-core = { version = "0.1.0", path = "../typio-core" }
+typio-platform = { version = "0.1.0", path = "../typio-platform" }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+dispatch2 = "0.3.1"
+objc2 = "0.6.5"
+objc2-app-kit = "0.3.2"
+objc2-foundation = "0.3.2"
