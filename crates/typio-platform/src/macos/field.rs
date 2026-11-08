@@ -46,6 +46,8 @@ pub enum FocusError {
     },
     /// The focused element does not say which process owns it.
     NoProcess,
+    /// Typio's own window is in front; Typio never reads itself, which would block.
+    OwnApp,
 }
 
 /// The text field with keyboard focus.
@@ -55,6 +57,9 @@ pub fn focused_field() -> Result<Field, FocusError> {
     let pid = NSWorkspace::sharedWorkspace()
         .frontmostApplication()
         .map(|app| app.processIdentifier());
+    if pid == Some(std::process::id() as i32) {
+        return Err(FocusError::OwnApp);
+    }
     let app = pid.map(Element::application);
     // Some apps answer only when asked through their own application element.
     let focused = system

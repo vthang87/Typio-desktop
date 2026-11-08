@@ -253,6 +253,36 @@ fn set_icon(mtm: MainThreadMarker, status: &StatusMenu, symbol: &str, dimmed: bo
     button.setToolTip(Some(&NSString::from_str(tip)));
 }
 
+/// A hidden main menu so ⌘X, ⌘C, ⌘V, ⌘A, ⌘Z and ⌘W work in Typio's own windows; a menu
+/// bar app never shows it.
+pub fn install_edit_menu(mtm: MainThreadMarker) {
+    let main = NSMenu::new(mtm);
+    let edit = NSMenu::new(mtm);
+    for (title, action, key) in [
+        ("Undo", sel!(undo:), "z"),
+        ("Redo", sel!(redo:), "Z"),
+        ("Cut", sel!(cut:), "x"),
+        ("Copy", sel!(copy:), "c"),
+        ("Paste", sel!(paste:), "v"),
+        ("Select All", sel!(selectAll:), "a"),
+        ("Close Window", sel!(performClose:), "w"),
+    ] {
+        let item = unsafe {
+            NSMenuItem::initWithTitle_action_keyEquivalent(
+                NSMenuItem::alloc(mtm),
+                &NSString::from_str(title),
+                Some(action),
+                &NSString::from_str(key),
+            )
+        };
+        edit.addItem(&item);
+    }
+    let holder = NSMenuItem::new(mtm);
+    holder.setSubmenu(Some(&edit));
+    main.addItem(&holder);
+    NSApplication::sharedApplication(mtm).setMainMenu(Some(&main));
+}
+
 /// Asks for files and imports each, then reports what happened.
 pub fn import_datasets(mtm: MainThreadMarker) {
     NSApplication::sharedApplication(mtm).activate();

@@ -7,8 +7,10 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
-use typio_core::backup::{parse_backup, MAX_BACKUP_BYTES};
-use typio_core::import::{looks_like_shortcuts, parse_shortcuts, parse_suggestion_file};
+use typio_core::backup::{format_backup, parse_backup, MAX_BACKUP_BYTES};
+use typio_core::import::{
+    looks_like_shortcuts, parse_shortcuts, parse_suggestion_file, parse_text_suggestions,
+};
 use typio_core::{DatasetKind, SuggestionDataset};
 
 const SCHEMA_VERSION: u32 = 1;
@@ -158,6 +160,96 @@ impl Store {
         self.disabled_datasets.retain(|disabled| disabled != id);
     }
 
+    /// Saves a dataset edited as text: `trigger: expansion` lines for shortcuts, one value
+    /// per line otherwise. `id` is `None` for a new dataset, which gets `kind`; an existing
+    /// one keeps its kind. Returns the id and warnings, such as triggers that other
+    /// datasets also use, or why nothing was saved.
+    pub fn save_dataset(
+        &mut self,
+        id: Option<&str>,
+        name: &str,
+        kind: DatasetKind,
+        text: &str,
+    ) -> Result<(String, Vec<String>), String> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err("Give the dataset a name.".into());
+        }
+        let existing = match id {
+            Some(id) => Some(
+                self.datasets
+                    .iter()
+                    .position(|dataset| dataset.id == id)
+                    .ok_or("This dataset no longer exists.")?,
+            ),
+            None => None,
+        };
+        let kind = existing.map_or(kind, |index| self.datasets[index].kind());
+
+        let mut warnings = Vec::new();
+        let (values, shortcuts) = match kind {
+            DatasetKind::Shortcuts => {
+                let parsed = parse_shortcuts(text);
+                if !parsed.invalid_lines.is_empty() {
+                    let lines: Vec<String> =
+                        parsed.invalid_lines.iter().map(usize::to_string).collect();
+                    return Err(format!("Line {} is not “trigger: text”.", lines.join(", ")));
+                }
+                if let Some(trigger) = parsed.duplicates.first() {
+                    return Err(format!("The trigger “{trigger}” is used more than once."));
+                }
+                for shortcut in &parsed.shortcuts {
+                    let trigger = shortcut.trigger.to_lowercase();
+                    let others = self.datasets.iter().enumerate().filter(|(index, dataset)| {
+                        Some(*index) != existing
+                            && dataset
+                                .shortcuts
+                                .iter()
+                                .flatten()
+                                .any(|other| other.trigger.to_lowercase() == trigger)
+                    });
+                    for (_, other) in others {
+                        warnings.push(format!(
+                            "“{}” is also a trigger in “{}”.",
+                            shortcut.trigger, other.name
+                        ));
+                    }
+                }
+                (Vec::new(), Some(parsed.shortcuts))
+            }
+            DatasetKind::Values => (parse_text_suggestions(text), None),
+        };
+        if values.is_empty() && shortcuts.as_ref().is_none_or(Vec::is_empty) {
+            return Err("Add at least one line.".into());
+        }
+
+        let dataset = match existing {
+            Some(index) => &mut self.datasets[index],
+            None => {
+                self.datasets.push(SuggestionDataset {
+                    id: new_id(),
+                    name: String::new(),
+                    kind: Some(kind),
+                    values: Vec::new(),
+                    shortcuts: None,
+                    created_at: now(),
+                    updated_at: String::new(),
+                });
+                self.datasets.last_mut().expect("just pushed")
+            }
+        };
+        dataset.name = name.to_string();
+        dataset.values = values;
+        dataset.shortcuts = shortcuts;
+        dataset.updated_at = now();
+        Ok((dataset.id.clone(), warnings))
+    }
+
+    /// Every dataset as a backup file the extension and this app can import.
+    pub fn backup(&self) -> String {
+        format_backup(&self.datasets, &now())
+    }
+
     /// Adds the datasets in a TXT, CSV or JSON file, or in a Typio extension backup.
     /// Returns a message for the user.
     pub fn import(&mut self, path: &Path) -> Result<String, String> {
@@ -305,6 +397,77 @@ mod tests {
         loaded.remove_dataset(&first);
         assert_eq!(loaded.datasets.len(), 1);
         assert!(loaded.disabled_datasets.is_empty());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn saves_edited_datasets() {
+        let mut store = Store::default();
+        let (id, warnings) = store
+            .save_dataset(
+                None,
+                " Phường ",
+                DatasetKind::Shortcuts,
+                "xtt: Xã Tam Tiến\nTT:Tam Tiến\n",
+            )
+            .unwrap();
+        assert!(warnings.is_empty());
+        assert_eq!(store.datasets[0].name, "Phường");
+        assert_eq!(store.datasets[0].shortcuts.as_ref().unwrap().len(), 2);
+
+        let (_, warnings) = store
+            .save_dataset(None, "Khác", DatasetKind::Shortcuts, "XTT:Xóm Tân Tiến")
+            .unwrap();
+        assert_eq!(warnings, vec!["“XTT” is also a trigger in “Phường”."]);
+
+        assert_eq!(
+            store.save_dataset(Some(&id), "Phường", DatasetKind::Values, "xtt:A\nxtt:B"),
+            Err("The trigger “xtt” is used more than once.".into()),
+            "an existing dataset keeps its kind"
+        );
+        assert_eq!(
+            store.save_dataset(Some(&id), "Phường", DatasetKind::Shortcuts, "xtt A"),
+            Err("Line 1 is not “trigger: text”.".into())
+        );
+        assert!(store
+            .save_dataset(Some(&id), "", DatasetKind::Shortcuts, "a:b")
+            .is_err());
+        assert!(store
+            .save_dataset(None, "Tên", DatasetKind::Values, "\n")
+            .is_err());
+
+        store
+            .save_dataset(
+                Some(&id),
+                "Phường mới",
+                DatasetKind::Shortcuts,
+                "pbg:Phường Bắc Giang",
+            )
+            .unwrap();
+        assert_eq!(store.datasets.len(), 2);
+        assert_eq!(store.datasets[0].name, "Phường mới");
+        store
+            .save_dataset(None, "Tên", DatasetKind::Values, "An\nBình\nAn")
+            .unwrap();
+        assert_eq!(store.datasets[2].values, vec!["An", "Bình"]);
+    }
+
+    #[test]
+    fn backups_round_trip_through_import() {
+        let dir = temp_dir("backup-export");
+        let mut store = Store::default();
+        store
+            .save_dataset(None, "Phường", DatasetKind::Shortcuts, "xtt:Xã Tam Tiến")
+            .unwrap();
+        let file = dir.join("typio-datasets.json");
+        fs::write(&file, store.backup()).unwrap();
+
+        let mut other = Store::load(&dir).unwrap();
+        assert_eq!(
+            other.import(&file).unwrap(),
+            "Imported 1 datasets from the Typio backup."
+        );
+        assert_eq!(other.datasets, store.datasets);
         fs::remove_dir_all(dir).unwrap();
     }
 

@@ -397,6 +397,19 @@ impl App {
         }
     }
 
+    /// Saves a dataset from the editor; see `Store::save_dataset`.
+    pub fn save_dataset(
+        &mut self,
+        id: Option<&str>,
+        name: &str,
+        kind: DatasetKind,
+        text: &str,
+    ) -> Result<Vec<String>, String> {
+        let (_, warnings) = self.store.save_dataset(id, name, kind, text)?;
+        self.store_changed();
+        Ok(warnings)
+    }
+
     pub fn set_trigger(&mut self, trigger: char) {
         self.store.trigger = trigger;
         self.store_changed();
