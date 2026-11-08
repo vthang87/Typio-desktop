@@ -11,6 +11,7 @@ use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
 use typio_core::RankedSuggestion;
 use typio_platform::Rect;
 
+use crate::i18n::{tr, T};
 use crate::popup::Popup;
 
 const WIDTH: f64 = 520.0;
@@ -60,7 +61,7 @@ impl Palette {
         unsafe { panel.setReleasedWhenClosed(false) };
 
         let field = NSTextField::textFieldWithString(&NSString::new(), mtm);
-        field.setPlaceholderString(Some(&NSString::from_str("Search values and shortcuts")));
+        field.setPlaceholderString(Some(&NSString::from_str(tr(T::SearchPlaceholder))));
         field.setFont(Some(&NSFont::systemFontOfSize(18.0)));
         field.setBezeled(false);
         field.setDrawsBackground(false);
@@ -89,6 +90,8 @@ impl Palette {
     /// Shows an empty search box near the top of the screen the user is on.
     pub fn open(&mut self) {
         self.field.setStringValue(&NSString::new());
+        self.field
+            .setPlaceholderString(Some(&NSString::from_str(tr(T::SearchPlaceholder))));
         self.items.clear();
         self.results.hide();
         if let Some(screen) = NSScreen::mainScreen(self.mtm) {

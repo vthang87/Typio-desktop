@@ -1,6 +1,7 @@
 //! The suggestion list: a borderless panel that never takes focus from the field.
 //! Mouse clicks reach it through the event tap, so the panel itself ignores the mouse.
 
+use crate::i18n::{tr, T};
 use objc2::rc::Retained;
 use objc2::{MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::{
@@ -93,7 +94,7 @@ impl Popup {
             .map(|item| {
                 let hint = match (&item.trigger, item.kind) {
                     (Some(trigger), _) => format!("{trigger} →"),
-                    (None, SuggestionKind::Initials) => "initials".into(),
+                    (None, SuggestionKind::Initials) => tr(T::InitialsHint).into(),
                     _ => String::new(),
                 };
                 (item.value.clone(), hint)

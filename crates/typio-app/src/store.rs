@@ -7,6 +7,8 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
+
+use crate::i18n::{tr, trf, Language, T};
 use typio_core::backup::{format_backup, parse_backup, MAX_BACKUP_BYTES};
 use typio_core::import::{
     looks_like_shortcuts, parse_shortcuts, parse_suggestion_file, parse_text_suggestions,
@@ -37,6 +39,8 @@ pub struct Store {
     /// The only apps Typio runs in under `AppMode::Selected`.
     #[serde(default)]
     pub selected_apps: Vec<AppRef>,
+    #[serde(default)]
+    pub language: Language,
     /// Typed before a word to bring up suggestions, as in `:xtt`.
     #[serde(default = "default_trigger")]
     pub trigger: char,
@@ -55,6 +59,7 @@ impl Default for Store {
             blocked_apps: default_blocked_apps(),
             selected_apps: Vec::new(),
             trigger: default_trigger(),
+            language: Language::System,
             path: PathBuf::new(),
         }
     }
@@ -223,14 +228,14 @@ impl Store {
     ) -> Result<(String, Vec<String>), String> {
         let name = name.trim();
         if name.is_empty() {
-            return Err("Give the dataset a name.".into());
+            return Err(tr(T::NeedName).into());
         }
         let existing = match id {
             Some(id) => Some(
                 self.datasets
                     .iter()
                     .position(|dataset| dataset.id == id)
-                    .ok_or("This dataset no longer exists.")?,
+                    .ok_or(tr(T::DatasetGone))?,
             ),
             None => None,
         };
@@ -243,10 +248,10 @@ impl Store {
                 if !parsed.invalid_lines.is_empty() {
                     let lines: Vec<String> =
                         parsed.invalid_lines.iter().map(usize::to_string).collect();
-                    return Err(format!("Line {} is not “trigger: text”.", lines.join(", ")));
+                    return Err(trf(T::BadLines, &[("lines", &lines.join(", "))]));
                 }
                 if let Some(trigger) = parsed.duplicates.first() {
-                    return Err(format!("The trigger “{trigger}” is used more than once."));
+                    return Err(trf(T::DuplicateTrigger, &[("trigger", trigger)]));
                 }
                 for shortcut in &parsed.shortcuts {
                     let trigger = shortcut.trigger.to_lowercase();
@@ -259,9 +264,9 @@ impl Store {
                                 .any(|other| other.trigger.to_lowercase() == trigger)
                     });
                     for (_, other) in others {
-                        warnings.push(format!(
-                            "“{}” is also a trigger in “{}”.",
-                            shortcut.trigger, other.name
+                        warnings.push(trf(
+                            T::TriggerElsewhere,
+                            &[("trigger", &shortcut.trigger), ("name", &other.name)],
                         ));
                     }
                 }
@@ -270,7 +275,7 @@ impl Store {
             DatasetKind::Values => (parse_text_suggestions(text), None),
         };
         if values.is_empty() && shortcuts.as_ref().is_none_or(Vec::is_empty) {
-            return Err("Add at least one line.".into());
+            return Err(tr(T::AddLine).into());
         }
 
         let dataset = match existing {
@@ -305,10 +310,9 @@ impl Store {
     pub fn import(&mut self, path: &Path) -> Result<String, String> {
         let bytes = fs::read(path).map_err(|error| error.to_string())?;
         if bytes.len() > MAX_BACKUP_BYTES {
-            return Err("This file is larger than 10 MB.".into());
+            return Err(tr(T::FileTooLarge).into());
         }
-        let text =
-            String::from_utf8(bytes).map_err(|_| "This file is not UTF-8 text.".to_string())?;
+        let text = String::from_utf8(bytes).map_err(|_| tr(T::NotUtf8).to_string())?;
         let filename = path
             .file_name()
             .and_then(|name| name.to_str())
@@ -328,7 +332,7 @@ impl Store {
                         None => self.datasets.push(dataset),
                     }
                 }
-                return Ok(format!("Imported {count} datasets from the Typio backup."));
+                return Ok(trf(T::ImportedBackup, &[("count", &count.to_string())]));
             }
         }
 
@@ -351,22 +355,30 @@ impl Store {
             let count = parsed.shortcuts.len();
             dataset.kind = Some(DatasetKind::Shortcuts);
             dataset.shortcuts = Some(parsed.shortcuts);
-            let mut message = format!("Imported {count} shortcuts into “{}”.", dataset.name);
+            let mut message = trf(
+                T::ImportedShortcuts,
+                &[("count", &count.to_string()), ("name", &dataset.name)],
+            );
             if !parsed.duplicates.is_empty() {
-                message += &format!(" Skipped {} duplicate triggers.", parsed.duplicates.len());
+                message += &trf(
+                    T::SkippedDuplicates,
+                    &[("count", &parsed.duplicates.len().to_string())],
+                );
             }
             message
         } else {
-            dataset.values = parse_suggestion_file(filename, &text)
-                .map_err(|_| "This file is not valid JSON.".to_string())?;
-            format!(
-                "Imported {} values into “{}”.",
-                dataset.values.len(),
-                dataset.name
+            dataset.values =
+                parse_suggestion_file(filename, &text).map_err(|_| tr(T::NotJson).to_string())?;
+            trf(
+                T::ImportedValues,
+                &[
+                    ("count", &dataset.values.len().to_string()),
+                    ("name", &dataset.name),
+                ],
             )
         };
         if dataset.values.is_empty() && dataset.shortcuts.as_ref().is_none_or(Vec::is_empty) {
-            return Err("This file has no values to import.".into());
+            return Err(tr(T::NothingToImport).into());
         }
         self.datasets.push(dataset);
         Ok(message)
