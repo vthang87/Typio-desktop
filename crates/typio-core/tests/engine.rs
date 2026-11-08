@@ -53,17 +53,21 @@ fn finds_the_word_before_the_caret() {
 
 #[test]
 fn finds_the_word_typed_after_a_colon() {
-    assert_eq!(prefixed_word_at(":xtt", 4), Some(word("xtt", 0, 4)));
+    assert_eq!(prefixed_word_at(":xtt", 4, ':'), Some(word("xtt", 0, 4)));
     assert_eq!(
-        prefixed_word_at("Giao tới :xtt", 13),
+        prefixed_word_at("Giao tới :xtt", 13, ':'),
         Some(word("xtt", 9, 13))
     );
-    assert_eq!(prefixed_word_at("Giao tới xtt", 12), None, "no colon");
-    assert_eq!(prefixed_word_at(":", 1), None, "nothing typed after it");
-    assert_eq!(prefixed_word_at("10:30", 5), None, "a time");
-    assert_eq!(prefixed_word_at("a:xtt", 5), None, "inside a word");
+    assert_eq!(prefixed_word_at("Giao tới xtt", 12, ':'), None, "no colon");
     assert_eq!(
-        prefixed_word_at(":xtt abc", 2),
+        prefixed_word_at(":", 1, ':'),
+        None,
+        "nothing typed after it"
+    );
+    assert_eq!(prefixed_word_at("10:30", 5, ':'), None, "a time");
+    assert_eq!(prefixed_word_at("a:xtt", 5, ':'), None, "inside a word");
+    assert_eq!(
+        prefixed_word_at(":xtt abc", 2, ':'),
         None,
         "a caret inside a word"
     );

@@ -113,27 +113,43 @@ pub fn word_at(text: &str, caret: usize) -> Option<WordRange> {
     })
 }
 
-/// The word typed after a `:` that ends at `caret`, for example `xtt` in `Giao tới :xtt`.
-/// The range covers the colon too, so choosing a suggestion replaces `:xtt`. The colon must
-/// start the field or follow whitespace, so `10:30` and `http://` are left alone.
-pub fn prefixed_word_at(text: &str, caret: usize) -> Option<WordRange> {
-    let word = word_at(text, caret)?;
+/// The word typed after `trigger` that ends at `caret`, for example `xtt` in
+/// `Giao tới :xtt` with `:`. The range covers the trigger too, so choosing a suggestion
+/// replaces `:xtt`. The trigger must start the field or follow whitespace, so `10:30` and
+/// `http://` are left alone.
+pub fn prefixed_word_at(text: &str, caret: usize, trigger: char) -> Option<WordRange> {
     let utf16: Vec<u16> = text.encode_utf16().collect();
-    let colon = word.start.checked_sub(1)?;
-    if utf16[colon] != u16::from(b':') {
+    if caret > utf16.len() {
         return None;
     }
-    let before = String::from_utf16_lossy(&utf16[..colon]);
-    if before
+    let before = String::from_utf16_lossy(&utf16[..caret]);
+    let after = String::from_utf16_lossy(&utf16[caret..]);
+    let ends_word = |character: char| character == trigger || is_word_break(character);
+    // A caret in the middle of a word never triggers.
+    if after.chars().next().is_some_and(|next| !ends_word(next)) {
+        return None;
+    }
+    let (word_start, trigger_start) = before
+        .char_indices()
+        .rev()
+        .find(|(_, character)| ends_word(*character))
+        .map(|(index, character)| (index + character.len_utf8(), index))?;
+    let word = &before[word_start..];
+    if word.is_empty() || !before[trigger_start..].starts_with(trigger) {
+        return None;
+    }
+    if before[..trigger_start]
         .chars()
         .next_back()
-        .is_some_and(|c| !c.is_whitespace())
+        .is_some_and(|character| !character.is_whitespace())
     {
         return None;
     }
+    let length = trigger.len_utf16() + word.encode_utf16().count();
     Some(WordRange {
-        start: colon,
-        ..word
+        text: word.to_string(),
+        start: caret - length,
+        end: caret,
     })
 }
 

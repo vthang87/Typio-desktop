@@ -22,6 +22,12 @@ pub struct Store {
     /// instead; those are ignored and dropped on the next save.
     #[serde(default = "enabled_by_default")]
     pub enabled: bool,
+    /// Ids of datasets that are kept but do not supply suggestions.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub disabled_datasets: Vec<String>,
+    /// Typed before a word to bring up suggestions, as in `:xtt`.
+    #[serde(default = "default_trigger")]
+    pub trigger: char,
     #[serde(skip)]
     path: PathBuf,
 }
@@ -32,6 +38,8 @@ impl Default for Store {
             schema_version: SCHEMA_VERSION,
             datasets: Vec::new(),
             enabled: true,
+            disabled_datasets: Vec::new(),
+            trigger: default_trigger(),
             path: PathBuf::new(),
         }
     }
@@ -40,6 +48,13 @@ impl Default for Store {
 fn enabled_by_default() -> bool {
     true
 }
+
+fn default_trigger() -> char {
+    ':'
+}
+
+/// Characters offered as the trigger in Settings.
+pub const TRIGGERS: [char; 8] = [':', ';', '/', '\\', '#', '@', '!', '~'];
 
 impl Store {
     /// `TYPIO_DATA_DIR` overrides the folder, for trying Typio without touching real data.
@@ -77,6 +92,29 @@ impl Store {
             serde_json::to_vec_pretty(self).map_err(io::Error::other)?,
         )?;
         fs::rename(temporary, &self.path)
+    }
+
+    pub fn is_dataset_enabled(&self, id: &str) -> bool {
+        !self.disabled_datasets.iter().any(|disabled| disabled == id)
+    }
+
+    pub fn set_dataset_enabled(&mut self, id: &str, enabled: bool) {
+        self.disabled_datasets.retain(|disabled| disabled != id);
+        if !enabled {
+            self.disabled_datasets.push(id.to_string());
+        }
+    }
+
+    /// Datasets that supply suggestions.
+    pub fn enabled_datasets(&self) -> impl Iterator<Item = &SuggestionDataset> {
+        self.datasets
+            .iter()
+            .filter(|dataset| self.is_dataset_enabled(&dataset.id))
+    }
+
+    pub fn remove_dataset(&mut self, id: &str) {
+        self.datasets.retain(|dataset| dataset.id != id);
+        self.disabled_datasets.retain(|disabled| disabled != id);
     }
 
     /// Adds the datasets in a TXT, CSV or JSON file, or in a Typio extension backup.
@@ -185,9 +223,37 @@ mod tests {
         .unwrap();
         let store = Store::load(&dir).unwrap();
         assert!(store.enabled, "older files load turned on");
+        assert_eq!(store.trigger, ':');
         store.save().unwrap();
         let saved = fs::read_to_string(dir.join("data.json")).unwrap();
         assert!(!saved.contains("rules"), "old rules are dropped");
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn enables_and_removes_datasets() {
+        let dir = temp_dir("enable");
+        let file = dir.join("phuong.txt");
+        fs::write(&file, "xtt:Xã Tam Tiến\npbg:Phường Bắc Giang\n").unwrap();
+        let mut store = Store::load(&dir).unwrap();
+        store.import(&file).unwrap();
+        store.import(&file).unwrap();
+        let first = store.datasets[0].id.clone();
+        assert_eq!(store.enabled_datasets().count(), 2);
+
+        store.set_dataset_enabled(&first, false);
+        store.set_dataset_enabled(&first, false);
+        assert_eq!(store.disabled_datasets, vec![first.clone()]);
+        assert_eq!(store.enabled_datasets().count(), 1);
+        store.trigger = '/';
+        store.save().unwrap();
+
+        let mut loaded = Store::load(&dir).unwrap();
+        assert!(!loaded.is_dataset_enabled(&first));
+        assert_eq!(loaded.trigger, '/');
+        loaded.remove_dataset(&first);
+        assert_eq!(loaded.datasets.len(), 1);
+        assert!(loaded.disabled_datasets.is_empty());
         fs::remove_dir_all(dir).unwrap();
     }
 
