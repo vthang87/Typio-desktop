@@ -278,6 +278,15 @@ fn general_page(
         ),
     );
 
+    add(
+        &view,
+        &secondary(
+            mtm,
+            "Quick Search: press ⌃⌥Space in any text field to search every enabled dataset.",
+            rect(PAGE_MARGIN, 132.0, inner, 16.0),
+        ),
+    );
+
     let access = if state.trusted {
         "Accessibility access: granted"
     } else {

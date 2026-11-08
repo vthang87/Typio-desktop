@@ -14,6 +14,7 @@ use typio_platform::{
     focused_field, frontmost_app, Disposition, EventTap, Field, InputEvent, Key, Rect,
 };
 
+use crate::palette::Palette;
 use crate::popup::Popup;
 use crate::store::{BlockedApp, Store};
 
@@ -60,6 +61,9 @@ pub fn refresh_ui() {
 pub struct App {
     pub store: Store,
     popup: Popup,
+    palette: Palette,
+    /// The field Quick Search inserts into, read when it opened.
+    palette_target: Option<Field>,
     tap: Option<EventTap>,
     field: Option<Field>,
     word: Option<WordRange>,
@@ -79,6 +83,8 @@ pub fn install(store: Store, mtm: MainThreadMarker) {
     let app = App {
         store,
         popup: Popup::new(mtm),
+        palette: Palette::new(mtm),
+        palette_target: None,
         tap: None,
         field: None,
         word: None,
@@ -176,6 +182,45 @@ impl App {
                 later(Duration::ZERO, App::toggle_enabled);
                 Disposition::Swallow
             }
+            InputEvent::KeyDown {
+                key: Key::Space,
+                modifiers,
+            } if modifiers.control && modifiers.option && !modifiers.command => {
+                later(Duration::ZERO, App::open_palette);
+                Disposition::Swallow
+            }
+            InputEvent::KeyDown { key, .. } if self.palette.is_open() => match key {
+                Key::Up | Key::Down => {
+                    self.palette.move_selection(key == Key::Down);
+                    Disposition::Swallow
+                }
+                Key::Return => {
+                    let value = self.palette.selected().map(|item| item.value.clone());
+                    later(Duration::ZERO, move |app| app.choose_palette(value));
+                    Disposition::Swallow
+                }
+                Key::Escape => {
+                    later(Duration::ZERO, |app| app.choose_palette(None));
+                    Disposition::Swallow
+                }
+                // The search box gets the key; search once it has the new text.
+                _ => {
+                    later(Duration::from_millis(10), App::update_palette);
+                    Disposition::Pass
+                }
+            },
+            InputEvent::MouseDown { x, y } if self.palette.is_open() => {
+                if let Some(item) = self.palette.item_at(x, y) {
+                    let value = Some(item.value.clone());
+                    later(Duration::ZERO, move |app| app.choose_palette(value));
+                    Disposition::Swallow
+                } else {
+                    if !self.palette.contains(x, y) {
+                        later(Duration::ZERO, |app| app.choose_palette(None));
+                    }
+                    Disposition::Pass
+                }
+            }
             InputEvent::KeyDown { key, modifiers } if self.popup.is_visible() => {
                 let plain = !modifiers.command && !modifiers.control && !modifiers.option;
                 match key {
@@ -267,22 +312,15 @@ impl App {
         }
         self.dismissed = None;
 
-        if !matches!(&self.suggester, Some((version, _)) if *version == self.store_version) {
-            let suggester = Suggester::new(self.store.enabled_datasets());
-            self.suggester = Some((self.store_version, suggester));
-        }
-        let Some((_, suggester)) = &self.suggester else {
-            return;
-        };
-
-        // Suggestions only come up for a word typed after a colon, such as `:xtt`.
-        self.word = info
+        // Suggestions only come up for a word typed after the trigger, such as `:xtt`.
+        let word = info
             .caret
             .and_then(|caret| prefixed_word_at(&info.value, caret, self.store.trigger));
-        self.results = match &self.word {
-            Some(word) => suggester.suggest(&word.text, None),
+        self.results = match &word {
+            Some(word) => self.suggester().suggest(&word.text, None),
             None => Vec::new(),
         };
+        self.word = word;
         debug!(
             "refresh {} {} caret={:?} length={} word={} results={} caret_rect={} field_rect={}",
             info.app_id,
@@ -299,6 +337,80 @@ impl App {
             _ => self.popup.hide(),
         }
         self.field = Some(field);
+    }
+
+    /// The index of the enabled datasets, rebuilt after the store changes.
+    fn suggester(&mut self) -> &Suggester {
+        if !matches!(&self.suggester, Some((version, _)) if *version == self.store_version) {
+            let suggester = Suggester::new(self.store.enabled_datasets());
+            self.suggester = Some((self.store_version, suggester));
+        }
+        &self.suggester.as_ref().expect("just set").1
+    }
+
+    /// Opens Quick Search for the focused field, unless Typio must stay out of it.
+    pub fn open_palette(&mut self) {
+        self.popup.hide();
+        self.results.clear();
+        let field = match focused_field() {
+            Ok(field) => field,
+            Err(error) => {
+                info!("Quick Search has no field: {error:?}");
+                return;
+            }
+        };
+        if !self.store.enabled
+            || is_blocked(&field)
+            || self.store.is_app_blocked(&field.info.app_id)
+        {
+            self.show_message("Typio is off in this field", anchor_of(&field));
+            return;
+        }
+        self.palette_target = Some(field);
+        self.palette.open();
+    }
+
+    fn update_palette(&mut self) {
+        if !self.palette.is_open() {
+            return;
+        }
+        let query = self.palette.query();
+        let items = if query.trim().is_empty() {
+            Vec::new()
+        } else {
+            self.suggester().suggest(&query, None)
+        };
+        self.palette.show(items);
+    }
+
+    /// Closes Quick Search and types `value`, if any, where the caret was.
+    fn choose_palette(&mut self, value: Option<String>) {
+        self.palette.close();
+        let target = self.palette_target.take();
+        let (Some(value), Some(target)) = (value, target) else {
+            return;
+        };
+        let (pid, anchor) = (target.info.pid, anchor_of(&target));
+        // Give focus a moment to settle back in the app being typed in.
+        later(Duration::from_millis(60), move |app| {
+            let field = match focused_field() {
+                Ok(field) if field.info.pid == pid && !is_blocked(&field) => field,
+                _ => {
+                    app.show_message("Typio can’t type here", anchor);
+                    return;
+                }
+            };
+            let Some(caret) = field.info.caret else {
+                app.show_message(
+                    "Click where the text should go, then try again",
+                    anchor_of(&field),
+                );
+                return;
+            };
+            if field.replace(caret, 0, &value).is_err() {
+                app.show_message("Typio can’t type into this field", anchor_of(&field));
+            }
+        });
     }
 
     fn insert(&mut self, index: usize) {

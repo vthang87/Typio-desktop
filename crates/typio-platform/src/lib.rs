@@ -65,6 +65,8 @@ pub enum Key {
     Escape,
     /// The physical T key, used by the enable shortcut.
     T,
+    /// The space bar, used by the Quick Search shortcut.
+    Space,
     Other,
 }
 

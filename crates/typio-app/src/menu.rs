@@ -44,6 +44,11 @@ define_class!(
             with_app(|app| app.set_dataset_enabled(index as usize, state != NSControlStateValueOn));
         }
 
+        #[unsafe(method(openQuickSearch:))]
+        fn open_quick_search(&self, _sender: Option<&AnyObject>) {
+            with_app(|app| app.open_palette());
+        }
+
         #[unsafe(method(toggleFrontmostApp:))]
         fn toggle_frontmost_app(&self, _sender: Option<&AnyObject>) {
             with_app(|app| app.toggle_frontmost_app());
@@ -122,6 +127,14 @@ impl MenuTarget {
                     | objc2_app_kit::NSEventModifierFlags::Option,
             );
             menu.addItem(&toggle);
+
+            let search = self.item(mtm, "Quick Search", Some(sel!(openQuickSearch:)));
+            search.setKeyEquivalent(&NSString::from_str(" "));
+            search.setKeyEquivalentModifierMask(
+                objc2_app_kit::NSEventModifierFlags::Control
+                    | objc2_app_kit::NSEventModifierFlags::Option,
+            );
+            menu.addItem(&search);
 
             // The menu bar app never comes to the front, so this is the app in use.
             if let Some((id, name)) =
