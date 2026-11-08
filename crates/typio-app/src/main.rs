@@ -1,6 +1,10 @@
 //! Typio for macOS: a menu bar app that suggests values and expands shortcuts in the text
 //! fields, for a word typed after a trigger character such as `:xtt`.
 
+// Only the macOS app exists so far; elsewhere the shared modules are built and tested but
+// not used.
+#![cfg_attr(not(target_os = "macos"), allow(dead_code, unused_macros))]
+
 /// Always logged: start-up, permissions and failures. Never pass typed text or field values.
 macro_rules! info {
     ($($arg:tt)*) => {
