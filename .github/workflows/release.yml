@@ -1,0 +1,67 @@
+name: Release
+
+# Runs when a pull request from dev is merged into main. Releases the version in Cargo.toml
+# once: bump it before merging to release again.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  macos:
+    name: Release macOS app
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read version
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if gh release view "v$version" >/dev/null 2>&1; then
+            echo "v$version is already released; bump the version in Cargo.toml to release again." >> "$GITHUB_STEP_SUMMARY"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: dtolnay/rust-toolchain@stable
+        if: steps.version.outputs.skip == 'false'
+        with:
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        if: steps.version.outputs.skip == 'false'
+      - name: Test
+        if: steps.version.outputs.skip == 'false'
+        run: cargo test --workspace
+      - name: Build Typio.app (Apple silicon and Intel)
+        if: steps.version.outputs.skip == 'false'
+        run: ./scripts/bundle-macos.sh
+        env:
+          TYPIO_UNIVERSAL: "1"
+          TYPIO_NO_INSTALL: "1"
+      - name: Zip
+        if: steps.version.outputs.skip == 'false'
+        run: ditto -c -k --keepParent target/release/Typio.app "Typio-${{ steps.version.outputs.version }}-macos.zip"
+      - name: Publish release
+        if: steps.version.outputs.skip == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ steps.version.outputs.tag }}" \
+            "Typio-${{ steps.version.outputs.version }}-macos.zip" \
+            --target "$GITHUB_SHA" \
+            --title "Typio ${{ steps.version.outputs.version }}" \
+            --generate-notes
