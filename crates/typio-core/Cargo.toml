@@ -1,0 +1,10 @@
+[package]
+name = "typio-core"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = { version = "1.0.154", features = ["preserve_order"] }
+unicode-normalization = "0.1.26"
