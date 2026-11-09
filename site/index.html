@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Typio Desktop – Gõ tắt và gợi ý trong mọi ứng dụng</title>
+  <meta name="description" content="Typio Desktop gợi ý từ danh sách và bảng gõ tắt của bạn trong mọi ứng dụng trên macOS và Windows. Dữ liệu chỉ nằm trên máy.">
+  <link rel="icon" href="favicon.png" type="image/png">
+  <link rel="stylesheet" href="site.css">
+  <style>
+    .platforms { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
+    .platform h3 { margin: 0 0 12px; font-size: 20px; letter-spacing: -.02em; }
+    .platform .steps li { padding: 14px 16px 14px 58px; }
+    .platform .steps li::before { top: 14px; left: 16px; }
+    .keys { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
+    .keys li { display: flex; gap: 14px; align-items: baseline; padding: 12px 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--paper); color: var(--muted); font-size: 15px; }
+    .keys kbd { min-width: 128px; color: var(--ink); }
+    .ext-card { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 18px; padding: 24px 28px; border: 1px solid var(--line); border-radius: 20px; background: var(--paper); }
+    .ext-card h2 { font-size: 22px; }
+    .ext-card p { margin: 0; color: var(--muted); max-width: 600px; }
+    @media (max-width: 760px) { .platforms { grid-template-columns: 1fr; } .keys kbd { min-width: 96px; } }
+  </style>
+</head>
+<body>
+  <header class="site-header">
+    <div class="wrap">
+      <a class="brand" href="./"><img src="assets/logo.svg" alt="">Typio Desktop</a>
+      <nav class="site-nav" aria-label="Điều hướng">
+        <a class="hide-sm" href="#tinh-nang">Tính năng</a>
+        <a href="#cai-dat">Cài đặt</a>
+        <a class="hide-sm" href="#du-lieu-mau">Dữ liệu mẫu</a>
+        <a href="privacy.html">Quyền riêng tư</a>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <div class="hero">
+      <div class="wrap">
+        <p class="eyebrow">Ứng dụng cho macOS và Windows</p>
+        <h1>Gõ tắt và gợi ý riêng của bạn, trong mọi ứng dụng</h1>
+        <p class="lede">Typio Desktop đưa danh sách và bảng gõ tắt của bạn vào Word, Excel, Zalo, phần mềm kế toán và mọi ô nhập khác. Gõ <code>:xtt</code> để ra “Xã Tam Tiến”. Dữ liệu chỉ nằm trên máy bạn.</p>
+        <div class="actions">
+          <a class="button primary" href="https://github.com/vthang87/Typio-desktop/releases/latest/download/Typio-macos.zip">Tải cho macOS</a>
+          <a class="button primary" href="https://github.com/vthang87/Typio-desktop/releases/latest/download/Typio-windows.zip">Tải cho Windows</a>
+        </div>
+        <p class="release-meta" id="release-meta" aria-live="polite">macOS 13 trở lên (Apple silicon và Intel) · Windows 10/11</p>
+      </div>
+    </div>
+
+    <section id="tinh-nang">
+      <div class="wrap">
+        <h2>Những gì Typio Desktop làm được</h2>
+        <p class="section-lede">Cùng bộ máy gợi ý với extension Typio, nay chạy ngoài trình duyệt: trong mọi ứng dụng có ô nhập chữ.</p>
+        <div class="features">
+          <article class="feature"><div class="icon">:</div><h3>Gõ ký tự kích hoạt</h3><p>Gõ <code>:</code> rồi vài chữ, Typio hiện gợi ý ngay cạnh con trỏ. Đổi ký tự kích hoạt trong Cài đặt nếu muốn.</p></article>
+          <article class="feature"><div class="icon">Aa</div><h3>Không dấu, chữ cái đầu</h3><p><code>:tam tien</code> ra “Xã Tam Tiến”, <code>:nva</code> ra “Nguyễn Văn An”.</p></article>
+          <article class="feature"><div class="icon">→</div><h3>Bảng gõ tắt</h3><p>Nhập bảng dạng <code>xtt:Xã Tam Tiến</code> và dùng ngay giữa câu. Bấm xoá lùi ngay sau đó để trả lại chữ đã gõ.</p></article>
+          <article class="feature"><div class="icon">⌕</div><h3>Tìm nhanh</h3><p>Trên macOS, nhấn <kbd>⌃⌥Space</kbd> để tìm trong mọi bộ dữ liệu đang bật mà không cần nhớ mã.</p></article>
+          <article class="feature"><div class="icon">▣</div><h3>Chọn ứng dụng</h3><p>Chạy trong mọi app trừ app bị bỏ qua, hoặc chỉ trong các app bạn chọn. Bật, tắt nhanh bằng <kbd>⌃⌥T</kbd> (Windows: <kbd>Ctrl+Alt+T</kbd>).</p></article>
+          <article class="feature"><div class="icon">⌂</div><h3>Chỉ trên máy bạn</h3><p>Không tài khoản, không máy chủ. Nhập TXT, CSV, JSON hoặc bản sao lưu của extension Typio.</p></article>
+        </div>
+      </div>
+    </section>
+
+    <section id="phim-tat">
+      <div class="wrap">
+        <h2>Dùng thế nào</h2>
+        <p class="section-lede">Typio nằm trên thanh menu (macOS) hoặc khay hệ thống (Windows). Trong bất kỳ ô nhập nào:</p>
+        <ul class="keys">
+          <li><kbd>:xtt</kbd><span>Gõ ký tự kích hoạt và vài chữ để hiện gợi ý.</span></li>
+          <li><kbd>↑ ↓</kbd><span>Chọn gợi ý.</span></li>
+          <li><kbd>Tab / Enter</kbd><span>Chèn gợi ý đã chọn thay cho phần vừa gõ.</span></li>
+          <li><kbd>Delete / Backspace</kbd><span>Bấm ngay sau khi chèn để lấy lại chữ đã gõ.</span></li>
+          <li><kbd>Esc</kbd><span>Ẩn gợi ý.</span></li>
+          <li><kbd>⌃⌥Space</kbd><span>Mở Tìm nhanh trong mọi bộ dữ liệu (macOS).</span></li>
+          <li><kbd>⌃⌥T</kbd><span>Bật hoặc tắt Typio (Windows: Ctrl+Alt+T).</span></li>
+        </ul>
+      </div>
+    </section>
+
+    <section id="cai-dat">
+      <div class="wrap">
+        <h2>Cài đặt</h2>
+        <p class="section-lede">Bản dựng chưa được Apple công chứng và chưa ký cho Windows, nên lần đầu mở cần thêm một bước xác nhận.</p>
+        <div class="platforms">
+          <div class="platform">
+            <h3>macOS</h3>
+            <ol class="steps">
+              <li><strong>Tải và giải nén</strong><p>Tải <code>Typio-macos.zip</code>, mở file để ra <code>Typio.app</code>.</p></li>
+              <li><strong>Kéo vào Applications</strong><p>Chép <code>Typio.app</code> vào thư mục Applications.</p></li>
+              <li><strong>Mở lần đầu</strong><p>Mở Typio. Nếu macOS chặn, vào System Settings → Privacy &amp; Security → bấm <em>Open Anyway</em>.</p></li>
+              <li><strong>Cấp quyền Accessibility</strong><p>Bấm biểu tượng Typio trên thanh menu → <em>Mở cài đặt Accessibility…</em> rồi bật Typio.</p></li>
+            </ol>
+          </div>
+          <div class="platform">
+            <h3>Windows 10/11</h3>
+            <ol class="steps">
+              <li><strong>Tải và giải nén</strong><p>Tải <code>Typio-windows.zip</code> và giải nén vào một thư mục cố định, ví dụ <code>Documents\Typio</code>.</p></li>
+              <li><strong>Mở Typio.exe</strong><p>Nếu SmartScreen hiện cảnh báo, bấm <em>More info</em> → <em>Run anyway</em>.</p></li>
+              <li><strong>Tìm biểu tượng trên khay</strong><p>Typio chạy ở khay hệ thống, góc dưới bên phải. Bấm vào để mở menu và Cài đặt.</p></li>
+            </ol>
+          </div>
+        </div>
+        <div class="notice">
+          <strong>Lưu ý</strong>
+          <ul>
+            <li><strong>Cập nhật:</strong> tải bản mới và thay thế bản cũ. Dữ liệu được giữ nguyên vì nằm trong thư mục dữ liệu riêng (Cài đặt → <em>Mở thư mục dữ liệu</em>).</li>
+            <li><strong>Trước khi chuyển máy:</strong> vào Cài đặt → Bộ dữ liệu → <em>Xuất sao lưu…</em> để giữ một bản sao.</li>
+            <li>Trình duyệt Chrome, Edge, Brave và Arc được bỏ qua sẵn, vì ở đó extension Typio lo phần gợi ý.</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section id="du-lieu-mau">
+      <div class="wrap">
+        <h2>Dữ liệu mẫu</h2>
+        <p class="section-lede">Chưa có dữ liệu riêng? Tải bảng gõ tắt mẫu dưới đây để thử Typio ngay.</p>
+        <div class="sample-card">
+          <div class="sample-info">
+            <span class="sample-tag">Bảng gõ tắt · 99 phường, xã</span>
+            <h3>Phường, xã tỉnh Bắc Ninh</h3>
+            <p>Mỗi dòng có dạng <code>mã:Tên đầy đủ</code>. Gõ <code>:</code> và mã ngắn để chèn tên đầy đủ, kể cả ở giữa câu.</p>
+            <a class="button primary" href="samples/phuong-tp-bac-ninh.txt" download="phuong-tp-bac-ninh.txt">Tải file mẫu (.txt)</a>
+          </div>
+          <dl class="sample-preview" aria-label="Xem trước vài dòng">
+            <div><dt>pbg</dt><dd>Phường Bắc Giang</dd></div>
+            <div><dt>xtt</dt><dd>Xã Tam Tiến</dd></div>
+            <div><dt>pkb</dt><dd>Phường Kinh Bắc</dd></div>
+            <div><dt>pts</dt><dd>Phường Từ Sơn</dd></div>
+            <div><dt>xlt</dt><dd>Xã Lâm Thao</dd></div>
+          </dl>
+        </div>
+        <ol class="steps sample-steps">
+          <li><strong>Nhập file</strong><p>Bấm biểu tượng Typio → <em>Nhập bộ dữ liệu…</em> và chọn file vừa tải. Typio tự nhận ra đây là bảng gõ tắt.</p></li>
+          <li><strong>Kiểm tra bộ dữ liệu đang bật</strong><p>Trong Cài đặt → <em>Bộ dữ liệu</em>, chỉ bộ được đánh dấu mới đưa ra gợi ý.</p></li>
+          <li><strong>Thử ngay</strong><p>Mở Notes, TextEdit hay Notepad, gõ <code>:xtt</code> rồi bấm Tab.</p></li>
+        </ol>
+      </div>
+    </section>
+
+    <section>
+      <div class="wrap">
+        <div class="ext-card">
+          <div>
+            <h2>Dùng trong trình duyệt?</h2>
+            <p>Trong Chrome, Edge, Brave và Arc, hãy dùng extension Typio. Xuất sao lưu ở Typio Desktop rồi nhập vào extension để dùng chung dữ liệu.</p>
+          </div>
+          <a class="button" href="https://typio.thangdv.com/">Xem extension Typio</a>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <div class="wrap">
+        <div class="privacy-card" style="grid-template-columns: 1fr">
+          <div>
+            <h2>Riêng tư từ thiết kế</h2>
+            <ul>
+              <li>Bộ dữ liệu, bảng gõ tắt và cài đặt chỉ lưu trong một thư mục trên máy bạn.</li>
+              <li>Typio chỉ đọc chữ quanh con trỏ để tìm gợi ý; không ghi lại những gì bạn gõ và không gửi dữ liệu đi đâu cả.</li>
+              <li>Không bao giờ gợi ý trong ô mật khẩu. Bỏ qua bất kỳ ứng dụng nào chỉ với một cú bấm.</li>
+            </ul>
+            <a class="button" href="privacy.html">Đọc chính sách quyền riêng tư</a>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="wrap">
+      <span>© 2026 Typio · Mã nguồn mở theo giấy phép MIT</span>
+      <span><a href="https://github.com/vthang87/Typio-desktop">GitHub</a> · <a href="privacy.html">Privacy policy</a></span>
+    </div>
+  </footer>
+
+  <script>
+    (async () => {
+      const meta = document.getElementById("release-meta");
+      try {
+        const response = await fetch("https://api.github.com/repos/vthang87/Typio-desktop/releases/latest");
+        if (!response.ok) return;
+        const release = await response.json();
+        const date = release.published_at ? new Date(release.published_at).toLocaleDateString("vi-VN") : "";
+        meta.textContent = ["Phiên bản " + release.tag_name.replace(/^v/, ""), date, meta.textContent].filter(Boolean).join(" · ");
+      } catch {}
+    })();
+  </script>
+</body>
+</html>
