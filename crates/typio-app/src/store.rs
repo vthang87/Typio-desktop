@@ -25,6 +25,10 @@ pub struct Store {
     /// Ids of datasets that are kept but do not supply suggestions.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub disabled_datasets: Vec<String>,
+    /// Apps Typio stays out of. Browsers start here because the Typio extension handles
+    /// them.
+    #[serde(default = "default_blocked_apps")]
+    pub blocked_apps: Vec<BlockedApp>,
     /// Typed before a word to bring up suggestions, as in `:xtt`.
     #[serde(default = "default_trigger")]
     pub trigger: char,
@@ -39,6 +43,7 @@ impl Default for Store {
             datasets: Vec::new(),
             enabled: true,
             disabled_datasets: Vec::new(),
+            blocked_apps: default_blocked_apps(),
             trigger: default_trigger(),
             path: PathBuf::new(),
         }
@@ -47,6 +52,28 @@ impl Default for Store {
 
 fn enabled_by_default() -> bool {
     true
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BlockedApp {
+    /// Bundle identifier.
+    pub id: String,
+    pub name: String,
+}
+
+fn default_blocked_apps() -> Vec<BlockedApp> {
+    [
+        ("com.google.Chrome", "Google Chrome"),
+        ("com.microsoft.edgemac", "Microsoft Edge"),
+        ("com.brave.Browser", "Brave Browser"),
+        ("company.thebrowser.Browser", "Arc"),
+    ]
+    .into_iter()
+    .map(|(id, name)| BlockedApp {
+        id: id.into(),
+        name: name.into(),
+    })
+    .collect()
 }
 
 fn default_trigger() -> char {
@@ -92,6 +119,20 @@ impl Store {
             serde_json::to_vec_pretty(self).map_err(io::Error::other)?,
         )?;
         fs::rename(temporary, &self.path)
+    }
+
+    pub fn is_app_blocked(&self, id: &str) -> bool {
+        self.blocked_apps.iter().any(|app| app.id == id)
+    }
+
+    pub fn set_app_blocked(&mut self, id: &str, name: &str, blocked: bool) {
+        self.blocked_apps.retain(|app| app.id != id);
+        if blocked {
+            self.blocked_apps.push(BlockedApp {
+                id: id.into(),
+                name: name.into(),
+            });
+        }
     }
 
     pub fn is_dataset_enabled(&self, id: &str) -> bool {
@@ -224,6 +265,10 @@ mod tests {
         let store = Store::load(&dir).unwrap();
         assert!(store.enabled, "older files load turned on");
         assert_eq!(store.trigger, ':');
+        assert!(
+            store.is_app_blocked("com.google.Chrome"),
+            "browsers start blocked"
+        );
         store.save().unwrap();
         let saved = fs::read_to_string(dir.join("data.json")).unwrap();
         assert!(!saved.contains("rules"), "old rules are dropped");
@@ -246,10 +291,16 @@ mod tests {
         assert_eq!(store.disabled_datasets, vec![first.clone()]);
         assert_eq!(store.enabled_datasets().count(), 1);
         store.trigger = '/';
+        store.set_app_blocked("com.google.Chrome", "Google Chrome", false);
+        store.set_app_blocked("com.apple.Notes", "Notes", true);
+        store.set_app_blocked("com.apple.Notes", "Notes", true);
+        assert_eq!(store.blocked_apps.len(), 4);
         store.save().unwrap();
 
         let mut loaded = Store::load(&dir).unwrap();
         assert!(!loaded.is_dataset_enabled(&first));
+        assert!(loaded.is_app_blocked("com.apple.Notes"));
+        assert!(!loaded.is_app_blocked("com.google.Chrome"));
         assert_eq!(loaded.trigger, '/');
         loaded.remove_dataset(&first);
         assert_eq!(loaded.datasets.len(), 1);

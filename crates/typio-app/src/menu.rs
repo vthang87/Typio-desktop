@@ -18,6 +18,7 @@ thread_local! {
     static STATUS: RefCell<Option<StatusMenu>> = const { RefCell::new(None) };
 }
 
+const OWN_BUNDLE_ID: &str = "io.github.vthang87.typio";
 const ACCESSIBILITY_SETTINGS: &str =
     "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility";
 
@@ -41,6 +42,11 @@ define_class!(
             let state: isize = unsafe { msg_send![sender, state] };
             // A menu item still shows its old state when its action runs.
             with_app(|app| app.set_dataset_enabled(index as usize, state != NSControlStateValueOn));
+        }
+
+        #[unsafe(method(toggleFrontmostApp:))]
+        fn toggle_frontmost_app(&self, _sender: Option<&AnyObject>) {
+            with_app(|app| app.toggle_frontmost_app());
         }
 
         #[unsafe(method(importDataset:))]
@@ -83,6 +89,7 @@ impl MenuTarget {
             trusted,
             enabled,
             datasets,
+            blocked_apps,
             ..
         }) = with_app(|app| app.ui_state())
         else {
@@ -115,6 +122,19 @@ impl MenuTarget {
                     | objc2_app_kit::NSEventModifierFlags::Option,
             );
             menu.addItem(&toggle);
+
+            // The menu bar app never comes to the front, so this is the app in use.
+            if let Some((id, name)) =
+                typio_platform::frontmost_app().filter(|(id, _)| id != OWN_BUNDLE_ID)
+            {
+                let blocked = blocked_apps.iter().any(|app| app.id == id);
+                let title = if blocked {
+                    format!("Turn On in {name}")
+                } else {
+                    format!("Turn Off in {name}")
+                };
+                menu.addItem(&self.item(mtm, &title, Some(sel!(toggleFrontmostApp:))));
+            }
         }
 
         menu.addItem(&NSMenuItem::separatorItem(mtm));
