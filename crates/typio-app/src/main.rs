@@ -1,9 +1,10 @@
-//! Typio for macOS: a menu bar app that suggests values and expands shortcuts in the text
-//! fields, for a word typed after a trigger character such as `:xtt`.
+//! Typio for macOS and Windows: a menu bar or tray app that suggests values and expands
+//! shortcuts in text fields, for a word typed after a trigger character such as `:xtt`.
 
-// Only the macOS app exists so far; elsewhere the shared modules are built and tested but
-// not used.
+// The Windows app uses fewer of the shared modules than the macOS one.
 #![cfg_attr(not(target_os = "macos"), allow(dead_code, unused_macros))]
+// A tray app: no console window on Windows.
+#![cfg_attr(windows, windows_subsystem = "windows")]
 
 /// Always logged: start-up, permissions and failures. Never pass typed text or field values.
 macro_rules! info {
@@ -36,6 +37,8 @@ mod popup;
 #[cfg(target_os = "macos")]
 mod settings;
 mod store;
+#[cfg(windows)]
+mod win;
 
 #[cfg(target_os = "macos")]
 fn main() {
@@ -82,7 +85,12 @@ fn main() {
     app.run();
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(windows)]
 fn main() {
-    eprintln!("Typio desktop currently runs on macOS only.");
+    win::run();
+}
+
+#[cfg(not(any(target_os = "macos", windows)))]
+fn main() {
+    eprintln!("Typio desktop runs on macOS and Windows.");
 }

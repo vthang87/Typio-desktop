@@ -1,0 +1,5 @@
+// The icon Windows shows for Typio.exe, and the app manifest.
+#define RT_MANIFEST 24
+
+1 ICON "../../../assets/AppIcon.ico"
+1 RT_MANIFEST "typio.manifest"

@@ -86,19 +86,29 @@ pub struct AppRef {
     pub name: String,
 }
 
+/// Browsers start skipped: the Typio extension gives suggestions there. Apps are known by
+/// bundle identifier on macOS and by lowercase executable name on Windows.
 fn default_blocked_apps() -> Vec<AppRef> {
-    [
+    #[cfg(windows)]
+    let apps = [
+        ("chrome.exe", "Google Chrome"),
+        ("msedge.exe", "Microsoft Edge"),
+        ("brave.exe", "Brave Browser"),
+        ("arc.exe", "Arc"),
+    ];
+    #[cfg(not(windows))]
+    let apps = [
         ("com.google.Chrome", "Google Chrome"),
         ("com.microsoft.edgemac", "Microsoft Edge"),
         ("com.brave.Browser", "Brave Browser"),
         ("company.thebrowser.Browser", "Arc"),
-    ]
-    .into_iter()
-    .map(|(id, name)| AppRef {
-        id: id.into(),
-        name: name.into(),
-    })
-    .collect()
+    ];
+    apps.into_iter()
+        .map(|(id, name)| AppRef {
+            id: id.into(),
+            name: name.into(),
+        })
+        .collect()
 }
 
 fn default_trigger() -> char {
@@ -114,10 +124,20 @@ impl Store {
         if let Some(dir) = std::env::var_os("TYPIO_DATA_DIR") {
             return PathBuf::from(dir);
         }
-        let home = std::env::var_os("HOME")
-            .map(PathBuf::from)
-            .unwrap_or_default();
-        home.join("Library/Application Support/Typio")
+        #[cfg(windows)]
+        {
+            std::env::var_os("APPDATA")
+                .map(PathBuf::from)
+                .unwrap_or_default()
+                .join("Typio")
+        }
+        #[cfg(not(windows))]
+        {
+            std::env::var_os("HOME")
+                .map(PathBuf::from)
+                .unwrap_or_default()
+                .join("Library/Application Support/Typio")
+        }
     }
 
     /// Loads the store, or starts an empty one when the file does not exist yet.
@@ -402,6 +422,11 @@ fn new_id() -> String {
 mod tests {
     use super::*;
 
+    /// The first app skipped by default: Google Chrome.
+    fn chrome() -> String {
+        default_blocked_apps()[0].id.clone()
+    }
+
     fn temp_dir(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("typio-test-{name}-{}", new_id()));
         fs::create_dir_all(&dir).unwrap();
@@ -419,10 +444,7 @@ mod tests {
         let store = Store::load(&dir).unwrap();
         assert!(store.enabled, "older files load turned on");
         assert_eq!(store.trigger, ':');
-        assert!(
-            !store.runs_in("com.google.Chrome"),
-            "browsers start skipped"
-        );
+        assert!(!store.runs_in(&chrome()), "browsers start skipped");
         assert!(store.runs_in("com.apple.Notes"));
         store.save().unwrap();
         let saved = fs::read_to_string(dir.join("data.json")).unwrap();
@@ -446,7 +468,7 @@ mod tests {
         assert_eq!(store.disabled_datasets, vec![first.clone()]);
         assert_eq!(store.enabled_datasets().count(), 1);
         store.trigger = '/';
-        store.set_listed("com.google.Chrome", "Google Chrome", false);
+        store.set_listed(&chrome(), "Google Chrome", false);
         store.set_listed("com.apple.Notes", "Notes", true);
         store.set_listed("com.apple.Notes", "Notes", true);
         assert_eq!(store.blocked_apps.len(), 4);
@@ -470,7 +492,7 @@ mod tests {
         assert!(loaded.runs_in("com.apple.TextEdit"));
         loaded.app_mode = AppMode::All;
         assert!(!loaded.runs_in("com.apple.Notes"));
-        assert!(loaded.runs_in("com.google.Chrome"));
+        assert!(loaded.runs_in(&chrome()));
         assert_eq!(loaded.trigger, '/');
         loaded.remove_dataset(&first);
         assert_eq!(loaded.datasets.len(), 1);

@@ -52,10 +52,8 @@ jobs:
           path: Typio-macos.zip
           if-no-files-found: error
 
-  # The Windows app is not written yet: this checks that the shared code builds and its
-  # tests pass on Windows.
   windows:
-    name: Windows checks
+    name: Windows app
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -69,3 +67,16 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Test
         run: cargo test --workspace
+      - name: Build Typio.exe
+        run: cargo build --release -p typio-app
+      - name: Zip
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist/Typio | Out-Null
+          Copy-Item target/release/typio-app.exe dist/Typio/Typio.exe
+          Compress-Archive -Path dist/Typio -DestinationPath Typio-windows.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Typio-windows
+          path: Typio-windows.zip
+          if-no-files-found: error

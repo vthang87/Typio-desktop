@@ -59,7 +59,14 @@ fn system_prefers_vietnamese() -> bool {
         .is_some_and(|language| language.to_string().starts_with("vi"))
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(windows)]
+fn system_prefers_vietnamese() -> bool {
+    // LANG_VIETNAMESE is 0x2a in the low ten bits of the language identifier.
+    let language = unsafe { windows::Win32::Globalization::GetUserDefaultUILanguage() };
+    language & 0x3ff == 0x2a
+}
+
+#[cfg(not(any(target_os = "macos", windows)))]
 fn system_prefers_vietnamese() -> bool {
     false
 }
@@ -138,7 +145,7 @@ texts! {
     TriggerHint => "Type {trigger}xtt to see suggestions for xtt",
         "Gõ {trigger}xtt để xem gợi ý cho xtt";
     LanguageLabel => "Language", "Ngôn ngữ";
-    LanguageSystem => "Same as macOS", "Theo macOS";
+    LanguageSystem => "Same as system", "Theo hệ thống";
     QuickSearchHint => "Quick Search: press ⌃⌥Space in a text field to search every enabled dataset.",
         "Tìm nhanh: nhấn ⌃⌥Space trong ô nhập để tìm trong mọi bộ dữ liệu đang bật.";
     AccessGranted => "Accessibility access: granted", "Quyền Accessibility: đã cấp";
@@ -215,8 +222,8 @@ texts! {
     CannotTypeField => "Typio can’t type into this field", "Typio không gõ được vào ô này";
     OnInApp => "Typio on in {name}", "Typio bật trong {name}";
     OffInApp => "Typio off in {name}", "Typio tắt trong {name}";
-    TurnedOnImport => "Typio on. Import a dataset from the menu bar.",
-        "Typio đã bật. Hãy nhập bộ dữ liệu từ thanh menu.";
+    TurnedOnImport => "Typio on. Import a dataset from the Typio menu.",
+        "Typio đã bật. Hãy nhập bộ dữ liệu từ menu Typio.";
     TurnedOn => "Typio on", "Typio đã bật";
     TurnedOff => "Typio off", "Typio đã tắt";
     CannotReadData => "Typio could not read its data", "Typio không đọc được dữ liệu";
