@@ -18,7 +18,7 @@ use typio_platform::{
 
 use super::popup::Popup;
 use crate::i18n::{tr, trf, Language, T};
-use crate::store::{AppMode, Store};
+use crate::store::{AppMode, AppRef, Store};
 
 /// Lets the app finish handling the key before Typio reads the field.
 const REFRESH_DELAY: Duration = Duration::from_millis(40);
@@ -222,14 +222,17 @@ pub struct App {
     pub last_app: Option<(String, String)>,
 }
 
-/// What the tray menu shows.
-pub struct MenuState {
+/// What the tray menu and the Settings window show.
+#[derive(Debug, Clone, PartialEq)]
+pub struct UiState {
     pub enabled: bool,
     pub trigger: char,
     pub language: Language,
     /// Name, detail (such as "99 shortcuts") and whether it is enabled.
     pub datasets: Vec<(String, String, bool)>,
     pub app_mode: AppMode,
+    /// Skipped apps in `AppMode::All`, selected apps in `AppMode::Selected`.
+    pub apps: Vec<AppRef>,
     /// The last app typed in: name and whether it is in the app list.
     pub app: Option<(String, bool)>,
 }
@@ -284,7 +287,7 @@ impl App {
         if let Err(error) = self.store.save() {
             info!("Could not save data: {error}");
         }
-        super::update_tray(self.store.enabled);
+        super::refresh_ui();
     }
 
     pub fn refresh(&mut self) {
@@ -400,7 +403,7 @@ impl App {
         }
     }
 
-    pub fn menu_state(&self) -> MenuState {
+    pub fn ui_state(&self) -> UiState {
         let datasets = self
             .store
             .datasets
@@ -426,12 +429,13 @@ impl App {
                 )
             })
             .collect();
-        MenuState {
+        UiState {
             enabled: self.store.enabled,
             trigger: self.store.trigger,
             language: self.store.language,
             datasets,
             app_mode: self.store.app_mode,
+            apps: self.store.app_list().to_vec(),
             app: self
                 .last_app
                 .as_ref()
@@ -462,6 +466,58 @@ impl App {
         };
         let listed = !self.store.is_listed(&id);
         self.store.set_listed(&id, &name, listed);
+        self.store_changed();
+    }
+
+    pub fn remove_dataset(&mut self, index: usize) {
+        let Some(id) = self
+            .store
+            .datasets
+            .get(index)
+            .map(|dataset| dataset.id.clone())
+        else {
+            return;
+        };
+        self.store.remove_dataset(&id);
+        self.store_changed();
+    }
+
+    /// The id, name, kind and text (one line per shortcut or value) of the dataset at
+    /// `index`, for the editor.
+    pub fn dataset_for_editing(
+        &self,
+        index: usize,
+    ) -> Option<(String, String, DatasetKind, String)> {
+        self.store.datasets.get(index).map(|dataset| {
+            (
+                dataset.id.clone(),
+                dataset.name.clone(),
+                dataset.kind(),
+                typio_core::import::format_dataset_export(dataset),
+            )
+        })
+    }
+
+    /// Saves a dataset from the editor; see `Store::save_dataset`.
+    pub fn save_dataset(
+        &mut self,
+        id: Option<&str>,
+        name: &str,
+        kind: DatasetKind,
+        text: &str,
+    ) -> Result<Vec<String>, String> {
+        let (_, warnings) = self.store.save_dataset(id, name, kind, text)?;
+        self.store_changed();
+        Ok(warnings)
+    }
+
+    pub fn add_app(&mut self, id: &str, name: &str) {
+        self.store.set_listed(id, name, true);
+        self.store_changed();
+    }
+
+    pub fn remove_app(&mut self, index: usize) {
+        self.store.remove_listed(index);
         self.store_changed();
     }
 

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Renders assets/icon.svg into assets/AppIcon.icns with Swift and tools that ship with macOS.
-# Run it again after changing the logo, then commit both files.
+# Renders assets/icon.svg into the app icons with Swift and tools that ship with macOS:
+# AppIcon.icns (macOS), AppIcon.ico (Windows) and tray.png / tray-off.png (Windows tray).
+# Run it again after changing the logo, then commit the files.
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -20,4 +21,14 @@ for size in 16 32 128 256 512; do
   sips -z "$double" "$double" "$master" --out "$set_dir/icon_${size}x${size}@2x.png" >/dev/null
 done
 iconutil -c icns "$set_dir" -o "$root/assets/AppIcon.icns"
-echo "Wrote $root/assets/AppIcon.icns"
+
+ico_sizes=()
+for size in 16 24 32 48 64 256; do
+  sips -z "$size" "$size" "$master" --out "$work/ico_$size.png" >/dev/null
+  ico_sizes+=("$work/ico_$size.png")
+done
+python3 "$root/scripts/make-ico.py" "$root/assets/AppIcon.ico" "${ico_sizes[@]}"
+
+swift "$root/scripts/render-svg.swift" "$root/assets/icon.svg" "$root/assets/tray.png" 32
+swift "$root/scripts/render-svg.swift" "$root/assets/icon.svg" "$root/assets/tray-off.png" 32 gray
+echo "Wrote AppIcon.icns, AppIcon.ico, tray.png and tray-off.png in $root/assets"

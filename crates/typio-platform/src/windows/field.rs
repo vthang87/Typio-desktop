@@ -382,15 +382,21 @@ fn foreground_pid() -> Option<u32> {
 }
 
 fn app_identity(pid: u32) -> (String, String) {
-    let Some(path) = process_path(pid) else {
-        return (format!("pid:{pid}"), String::new());
-    };
-    let file = std::path::Path::new(&path);
+    match process_path(pid) {
+        Some(path) => app_for_executable(&path),
+        None => (format!("pid:{pid}"), String::new()),
+    }
+}
+
+/// The app id (lowercase executable name, such as `notepad.exe`) and display name for the
+/// executable at `path`, as Typio lists apps.
+pub fn app_for_executable(path: &str) -> (String, String) {
+    let file = std::path::Path::new(path);
     let id = file
         .file_name()
         .map(|name| name.to_string_lossy().to_lowercase())
-        .unwrap_or_else(|| format!("pid:{pid}"));
-    let name = file_description(&path).unwrap_or_else(|| {
+        .unwrap_or_default();
+    let name = file_description(path).unwrap_or_else(|| {
         file.file_stem()
             .map(|stem| stem.to_string_lossy().into_owned())
             .unwrap_or_default()

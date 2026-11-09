@@ -1,7 +1,10 @@
 mod field;
 mod hook;
 
-pub use field::{focused_field, frontmost_app, press_backspace, Field, FocusError, InsertError};
+pub use field::{
+    app_for_executable, focused_field, frontmost_app, press_backspace, Field, FocusError,
+    InsertError,
+};
 pub use hook::EventTap;
 
 /// Windows needs no permission to read other apps' fields or watch the keyboard.
