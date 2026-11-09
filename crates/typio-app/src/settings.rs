@@ -8,8 +8,8 @@ use objc2::{define_class, msg_send, sel, AnyThread, MainThreadMarker, MainThread
 use objc2_app_kit::{
     NSAlert, NSAlertFirstButtonReturn, NSApplication, NSBackingStoreType, NSBorderType, NSButton,
     NSColor, NSControlSize, NSControlStateValueOff, NSControlStateValueOn, NSFont, NSLineBreakMode,
-    NSPopUpButton, NSScrollView, NSTabView, NSTabViewItem, NSTextAlignment, NSTextField, NSView,
-    NSWindow, NSWindowStyleMask,
+    NSModalResponseOK, NSPopUpButton, NSSavePanel, NSScrollView, NSTabView, NSTabViewItem,
+    NSTextAlignment, NSTextField, NSView, NSWindow, NSWindowStyleMask,
 };
 use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
 
@@ -37,7 +37,7 @@ define_class!(
     #[unsafe(super(NSView))]
     #[thread_kind = MainThreadOnly]
     #[name = "TypioFlippedView"]
-    struct FlippedView;
+    pub(crate) struct FlippedView;
 
     impl FlippedView {
         #[unsafe(method(isFlipped))]
@@ -50,7 +50,7 @@ define_class!(
 );
 
 impl FlippedView {
-    fn new(mtm: MainThreadMarker, size: NSSize) -> Retained<Self> {
+    pub(crate) fn new(mtm: MainThreadMarker, size: NSSize) -> Retained<Self> {
         let this = Self::alloc(mtm).set_ivars(());
         unsafe { msg_send![super(this), initWithFrame: NSRect::new(NSPoint::new(0.0, 0.0), size)] }
     }
@@ -99,6 +99,23 @@ define_class!(
             if let Some(&trigger) = usize::try_from(index).ok().and_then(|index| TRIGGERS.get(index)) {
                 with_app(|app| app.set_trigger(trigger));
             }
+        }
+
+        #[unsafe(method(editDataset:))]
+        fn edit_dataset(&self, sender: Option<&AnyObject>) {
+            let Some(sender) = sender else { return };
+            let index: isize = unsafe { msg_send![sender, tag] };
+            crate::editor::open(self.mtm(), Some(index as usize));
+        }
+
+        #[unsafe(method(newDataset:))]
+        fn new_dataset(&self, _sender: Option<&AnyObject>) {
+            crate::editor::open(self.mtm(), None);
+        }
+
+        #[unsafe(method(exportBackup:))]
+        fn export_backup(&self, _sender: Option<&AnyObject>) {
+            export_backup(self.mtm());
         }
 
         #[unsafe(method(unblockApp:))]
@@ -315,7 +332,7 @@ fn datasets_page(
                 dataset.enabled,
                 target,
                 sel!(toggleDataset:),
-                rect(12.0, top + 6.0, width - 250.0, 20.0),
+                rect(12.0, top + 6.0, width - 320.0, 20.0),
             );
             enable.setTag(index as isize);
             enable.setLineBreakMode(NSLineBreakMode::ByTruncatingTail);
@@ -324,11 +341,22 @@ fn datasets_page(
             let detail = secondary(
                 mtm,
                 &dataset.detail,
-                rect(width - 230.0, top + 8.0, 130.0, 16.0),
+                rect(width - 300.0, top + 8.0, 130.0, 16.0),
             );
             detail.setAlignment(NSTextAlignment::Right);
             add(list, &detail);
 
+            add(
+                list,
+                &small_button(
+                    mtm,
+                    "Edit…",
+                    target,
+                    sel!(editDataset:),
+                    index,
+                    rect(width - 160.0, top + 4.0, 68.0, 24.0),
+                ),
+            );
             add(
                 list,
                 &small_button(
@@ -347,8 +375,10 @@ fn datasets_page(
     let buttons_top = 36.0 + list_height + 12.0;
     let mut x = PAGE_MARGIN - 6.0;
     for (title, action, width) in [
-        ("Import…", sel!(importDataset:), 100.0),
-        ("Open Data Folder", sel!(openDataFolder:), 150.0),
+        ("New…", sel!(newDataset:), 80.0),
+        ("Import…", sel!(importDataset:), 90.0),
+        ("Export Backup…", sel!(exportBackup:), 130.0),
+        ("Open Data Folder", sel!(openDataFolder:), 140.0),
     ] {
         add(
             &view,
@@ -459,6 +489,28 @@ fn small_button(
     button
 }
 
+/// Asks where to save, then writes every dataset as a backup file.
+fn export_backup(mtm: MainThreadMarker) {
+    let Some(backup) = with_app(|app| app.store.backup()) else {
+        return;
+    };
+    let panel = NSSavePanel::savePanel(mtm);
+    let date = humantime::format_rfc3339(std::time::SystemTime::now()).to_string();
+    panel.setNameFieldStringValue(&NSString::from_str(&format!(
+        "typio-datasets-{}.json",
+        &date[..10]
+    )));
+    if panel.runModal() != NSModalResponseOK {
+        return;
+    }
+    let Some(path) = panel.URL().and_then(|url| url.path()) else {
+        return;
+    };
+    if let Err(error) = std::fs::write(path.to_string(), backup) {
+        menu::alert(mtm, "Typio could not save the backup", &error.to_string());
+    }
+}
+
 fn confirm_delete(mtm: MainThreadMarker, name: &str) -> bool {
     let alert = NSAlert::new(mtm);
     alert.setMessageText(&NSString::from_str(&format!("Delete “{name}”?")));
@@ -471,31 +523,31 @@ fn confirm_delete(mtm: MainThreadMarker, name: &str) -> bool {
     alert.runModal() == NSAlertFirstButtonReturn
 }
 
-fn rect(x: f64, y: f64, width: f64, height: f64) -> NSRect {
+pub(crate) fn rect(x: f64, y: f64, width: f64, height: f64) -> NSRect {
     NSRect::new(NSPoint::new(x, y), NSSize::new(width, height))
 }
 
-fn add(parent: &NSView, child: &NSView) {
+pub(crate) fn add(parent: &NSView, child: &NSView) {
     parent.addSubview(child);
 }
 
-fn label(mtm: MainThreadMarker, text: &str, frame: NSRect) -> Retained<NSTextField> {
+pub(crate) fn label(mtm: MainThreadMarker, text: &str, frame: NSRect) -> Retained<NSTextField> {
     let label = NSTextField::labelWithString(&NSString::from_str(text), mtm);
     label.setFrame(frame);
     label
 }
 
-fn secondary(mtm: MainThreadMarker, text: &str, frame: NSRect) -> Retained<NSTextField> {
+pub(crate) fn secondary(mtm: MainThreadMarker, text: &str, frame: NSRect) -> Retained<NSTextField> {
     let label = label(mtm, text, frame);
     label.setFont(Some(&NSFont::systemFontOfSize(12.0)));
     label.setTextColor(Some(&NSColor::secondaryLabelColor()));
     label
 }
 
-fn button(
+pub(crate) fn button(
     mtm: MainThreadMarker,
     title: &str,
-    target: &SettingsTarget,
+    target: &AnyObject,
     action: Sel,
     frame: NSRect,
 ) -> Retained<NSButton> {

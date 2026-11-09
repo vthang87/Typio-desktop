@@ -1,4 +1,4 @@
-//! Reads backups exported by the Typio extension. Field rules describe web page fields, so
+//! Reads backups exported by the Typio extension, and writes datasets backups it can read. Field rules describe web page fields, so
 //! the desktop app keeps them as raw JSON and only uses the datasets.
 
 use std::collections::HashSet;
@@ -60,6 +60,20 @@ impl fmt::Display for BackupError {
 }
 
 impl std::error::Error for BackupError {}
+
+/// A datasets backup in the extension's format, which both apps import.
+pub fn format_backup(datasets: &[SuggestionDataset], exported_at: &str) -> String {
+    let backup = serde_json::json!({
+        "app": "typio",
+        "schemaVersion": BACKUP_SCHEMA_VERSION,
+        "scope": "datasets",
+        "exportedAt": exported_at,
+        "suggestionDatasets": datasets,
+    });
+    let mut text = serde_json::to_string_pretty(&backup).unwrap_or_default();
+    text.push('\n');
+    text
+}
 
 /// Parses and validates a backup file.
 pub fn parse_backup(text: &str) -> Result<TypioBackup, BackupError> {

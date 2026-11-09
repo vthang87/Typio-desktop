@@ -19,6 +19,8 @@ macro_rules! debug {
 
 #[cfg(target_os = "macos")]
 mod controller;
+#[cfg(target_os = "macos")]
+mod editor;
 mod log;
 #[cfg(target_os = "macos")]
 mod menu;
@@ -55,6 +57,7 @@ fn main() {
     };
     controller::install(store, mtm);
     menu::install(mtm);
+    menu::install_edit_menu(mtm);
     controller::refresh_ui();
     let executable = std::env::current_exe().unwrap_or_default();
     info!(
