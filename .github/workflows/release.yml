@@ -46,6 +46,12 @@ jobs:
       - name: Test
         if: steps.version.outputs.skip == 'false'
         run: cargo test --workspace
+      - name: Import signing certificate
+        if: steps.version.outputs.skip == 'false'
+        run: ./scripts/ci-import-cert.sh
+        env:
+          TYPIO_SIGN_P12: ${{ secrets.TYPIO_SIGN_P12 }}
+          TYPIO_SIGN_P12_PASSWORD: ${{ secrets.TYPIO_SIGN_P12_PASSWORD }}
       - name: Build Typio.app (Apple silicon and Intel)
         if: steps.version.outputs.skip == 'false'
         run: ./scripts/bundle-macos.sh
