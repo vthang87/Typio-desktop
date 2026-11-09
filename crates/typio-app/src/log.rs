@@ -1,4 +1,5 @@
-//! A small log at `~/Library/Logs/Typio.log`, since a menu bar app has no console.
+//! A small log at `~/Library/Logs/Typio.log` (macOS) or `%LOCALAPPDATA%\\Typio\\Typio.log`
+//! (Windows), since a menu bar or tray app has no console.
 //! Callers never pass typed text or field values.
 
 use std::fs::{self, OpenOptions};
@@ -9,6 +10,16 @@ use std::time::SystemTime;
 
 use crate::store::Store;
 
+#[cfg(windows)]
+fn path() -> PathBuf {
+    std::env::var_os("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .unwrap_or_default()
+        .join("Typio")
+        .join("Typio.log")
+}
+
+#[cfg(not(windows))]
 fn path() -> PathBuf {
     let home = std::env::var_os("HOME")
         .map(PathBuf::from)
