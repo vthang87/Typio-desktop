@@ -1,0 +1,71 @@
+name: CI
+
+on:
+  push:
+    branches: [dev]
+  pull_request:
+    branches: [dev, main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  macos:
+    name: macOS app
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+      - name: Format
+        run: cargo fmt --all --check
+      - name: Lint
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Test
+        run: cargo test --workspace
+      - name: Import signing certificate
+        run: ./scripts/ci-import-cert.sh
+        env:
+          TYPIO_SIGN_P12: ${{ secrets.TYPIO_SIGN_P12 }}
+          TYPIO_SIGN_P12_PASSWORD: ${{ secrets.TYPIO_SIGN_P12_PASSWORD }}
+      - name: Build Typio.app (Apple silicon and Intel)
+        run: ./scripts/bundle-macos.sh
+        env:
+          TYPIO_UNIVERSAL: "1"
+          TYPIO_NO_INSTALL: "1"
+      - name: Zip
+        run: ditto -c -k --keepParent target/release/Typio.app Typio-macos.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Typio-macos
+          path: Typio-macos.zip
+          if-no-files-found: error
+
+  # The Windows app is not written yet: this checks that the shared code builds and its
+  # tests pass on Windows.
+  windows:
+    name: Windows checks
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Format
+        run: cargo fmt --all --check
+      - name: Lint
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Test
+        run: cargo test --workspace

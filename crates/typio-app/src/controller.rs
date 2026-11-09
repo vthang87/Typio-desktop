@@ -1,0 +1,701 @@
+//! Ties the event tap, the focused field, the store and the popup together. Everything
+//! here runs on the main thread; the tap only decides what to swallow and schedules the
+//! slower Accessibility work right after.
+
+use std::cell::RefCell;
+use std::time::{Duration, Instant};
+
+use dispatch2::{DispatchQueue, DispatchTime};
+use objc2::MainThreadMarker;
+use typio_core::engine::{prefixed_word_at, Suggester, WordRange};
+use typio_core::sensitive::is_sensitive_label;
+use typio_core::{DatasetKind, RankedSuggestion};
+use typio_platform::{
+    focused_field, frontmost_app, Disposition, EventTap, Field, InputEvent, Key, Rect,
+};
+
+use crate::i18n::{tr, trf, Language, T};
+use crate::palette::Palette;
+use crate::popup::Popup;
+use crate::store::{AppMode, AppRef, Store};
+
+/// Some input methods send each key twice; extra Deletes this soon after an undo are
+/// dropped so they do not eat into the restored text.
+const UNDO_ECHO: Duration = Duration::from_millis(60);
+
+/// The last expansion, which Delete right after it undoes.
+struct Expansion {
+    pid: i32,
+    /// UTF-16 offset where the inserted text starts.
+    start: usize,
+    inserted: String,
+    /// What it replaced, such as `:xtt`.
+    original: String,
+}
+
+/// Lets an input method finish rewriting the text before Typio reads it.
+const REFRESH_DELAY: Duration = Duration::from_millis(40);
+const MESSAGE_DURATION: Duration = Duration::from_millis(1600);
+
+thread_local! {
+    static APP: RefCell<Option<App>> = const { RefCell::new(None) };
+}
+
+/// What the menu bar icon, the menu and the Settings window show.
+pub struct UiState {
+    /// Accessibility access is granted and Typio is listening.
+    pub trusted: bool,
+    pub enabled: bool,
+    pub trigger: char,
+    pub language: Language,
+    pub datasets: Vec<DatasetRow>,
+    pub app_mode: AppMode,
+    /// Skipped apps in `AppMode::All`, selected apps in `AppMode::Selected`.
+    pub apps: Vec<AppRef>,
+}
+
+pub struct DatasetRow {
+    pub name: String,
+    /// For example "99 shortcuts".
+    pub detail: String,
+    pub enabled: bool,
+}
+
+/// Brings the menu bar icon and the Settings window up to date, right after the current
+/// event finishes.
+pub fn refresh_ui() {
+    let _ = DispatchQueue::main().after(DispatchTime::NOW, || {
+        let Some(mtm) = MainThreadMarker::new() else {
+            return;
+        };
+        let Some(state) = with_app(|app| app.ui_state()) else {
+            return;
+        };
+        crate::menu::update_icon(mtm, &state);
+        crate::settings::update(mtm, &state);
+    });
+}
+
+pub struct App {
+    pub store: Store,
+    popup: Popup,
+    palette: Palette,
+    last_expansion: Option<Expansion>,
+    /// Until when extra Deletes after an undo are dropped.
+    undo_echo_until: Option<Instant>,
+    /// The field Quick Search inserts into, read when it opened.
+    palette_target: Option<Field>,
+    tap: Option<EventTap>,
+    field: Option<Field>,
+    word: Option<WordRange>,
+    results: Vec<RankedSuggestion>,
+    /// The field text when the user pressed Escape; no suggestions until it changes.
+    dismissed: Option<String>,
+    /// Indexed datasets, rebuilt when the store changes.
+    suggester: Option<(u64, Suggester)>,
+    store_version: u64,
+    refresh_generation: u64,
+    message_generation: u64,
+    /// The last Accessibility state written to the log, so polling logs only changes.
+    logged_trust: Option<bool>,
+}
+
+pub fn install(store: Store, mtm: MainThreadMarker) {
+    let app = App {
+        store,
+        popup: Popup::new(mtm),
+        palette: Palette::new(mtm),
+        palette_target: None,
+        last_expansion: None,
+        undo_echo_until: None,
+        tap: None,
+        field: None,
+        word: None,
+        results: Vec::new(),
+        dismissed: None,
+        suggester: None,
+        store_version: 0,
+        refresh_generation: 0,
+        message_generation: 0,
+        logged_trust: None,
+    };
+    APP.with(|cell| *cell.borrow_mut() = Some(app));
+}
+
+/// Runs `action` on the app; `None` while the app is already busy (for example inside a
+/// modal dialog started from a menu action).
+pub fn with_app<R>(action: impl FnOnce(&mut App) -> R) -> Option<R> {
+    APP.with(|cell| cell.try_borrow_mut().ok()?.as_mut().map(action))
+}
+
+fn later(delay: Duration, action: impl FnOnce(&mut App) + Send + 'static) {
+    let when = DispatchTime::try_from(delay).unwrap_or(DispatchTime::NOW);
+    let _ = DispatchQueue::main().after(when, move || {
+        with_app(action);
+    });
+}
+
+impl App {
+    pub fn has_tap(&self) -> bool {
+        self.tap.is_some()
+    }
+
+    /// Installs the event tap once Accessibility access is granted, checking again every
+    /// two seconds until then.
+    pub fn start_tap(&mut self) {
+        if self.tap.is_some() {
+            return;
+        }
+        let trusted = typio_platform::is_trusted(false);
+        if self.logged_trust != Some(trusted) {
+            info!("Accessibility access: {trusted}");
+            // macOS keeps refusing Accessibility calls to other apps from a process that
+            // started without access, even after it is granted; only a new process works.
+            if trusted && self.logged_trust == Some(false) {
+                relaunch();
+                return;
+            }
+            self.logged_trust = Some(trusted);
+        }
+        if trusted {
+            let tap = EventTap::install(|event| {
+                // Only special keys are named; typed characters all log as `Other`.
+                if let InputEvent::KeyDown { key, modifiers } = event {
+                    debug!("key {key:?} {modifiers:?}");
+                }
+                let disposition = with_app(|app| app.handle(event));
+                if disposition.is_none() {
+                    debug!("event while busy, passed through");
+                }
+                disposition.unwrap_or(Disposition::Pass)
+            });
+            match tap {
+                Ok(tap) => {
+                    info!("Event tap installed");
+                    self.tap = Some(tap);
+                    refresh_ui();
+                }
+                Err(error) => info!("Event tap failed: {error}"),
+            }
+        }
+        if self.tap.is_none() {
+            later(Duration::from_secs(2), App::start_tap);
+        }
+    }
+
+    pub fn store_changed(&mut self) {
+        self.store_version += 1;
+        refresh_ui();
+        if let Err(error) = self.store.save() {
+            info!("Could not save data: {error}");
+        }
+    }
+
+    /// Decides synchronously whether the tap swallows `event`.
+    fn handle(&mut self, event: InputEvent) -> Disposition {
+        let plain_delete = matches!(
+            event,
+            InputEvent::KeyDown { key: Key::Backspace, modifiers }
+                if !modifiers.command && !modifiers.control && !modifiers.option
+        );
+        if plain_delete
+            && self
+                .undo_echo_until
+                .is_some_and(|until| Instant::now() < until)
+        {
+            return Disposition::Swallow;
+        }
+        self.undo_echo_until = None;
+        // Only the very next key can undo an expansion.
+        if let Some(expansion) = self.last_expansion.take() {
+            if plain_delete && !self.popup.is_visible() && self.undo(expansion) {
+                return Disposition::Swallow;
+            }
+        }
+        match event {
+            InputEvent::KeyDown {
+                key: Key::T,
+                modifiers,
+            } if modifiers.control
+                && modifiers.option
+                && !modifiers.command
+                && !modifiers.shift =>
+            {
+                later(Duration::ZERO, App::toggle_enabled);
+                Disposition::Swallow
+            }
+            InputEvent::KeyDown {
+                key: Key::Space,
+                modifiers,
+            } if modifiers.control && modifiers.option && !modifiers.command => {
+                later(Duration::ZERO, App::open_palette);
+                Disposition::Swallow
+            }
+            InputEvent::KeyDown { key, .. } if self.palette.is_open() => match key {
+                Key::Up | Key::Down => {
+                    self.palette.move_selection(key == Key::Down);
+                    Disposition::Swallow
+                }
+                Key::Return => {
+                    let value = self.palette.selected().map(|item| item.value.clone());
+                    later(Duration::ZERO, move |app| app.choose_palette(value));
+                    Disposition::Swallow
+                }
+                Key::Escape => {
+                    later(Duration::ZERO, |app| app.choose_palette(None));
+                    Disposition::Swallow
+                }
+                // The search box gets the key; search once it has the new text.
+                _ => {
+                    later(Duration::from_millis(10), App::update_palette);
+                    Disposition::Pass
+                }
+            },
+            InputEvent::MouseDown { x, y } if self.palette.is_open() => {
+                if let Some(item) = self.palette.item_at(x, y) {
+                    let value = Some(item.value.clone());
+                    later(Duration::ZERO, move |app| app.choose_palette(value));
+                    Disposition::Swallow
+                } else {
+                    if !self.palette.contains(x, y) {
+                        later(Duration::ZERO, |app| app.choose_palette(None));
+                    }
+                    Disposition::Pass
+                }
+            }
+            InputEvent::KeyDown { key, modifiers } if self.popup.is_visible() => {
+                let plain = !modifiers.command && !modifiers.control && !modifiers.option;
+                match key {
+                    Key::Down | Key::Up if plain => {
+                        let count = self.results.len();
+                        let next = match (self.popup.selected(), key) {
+                            (None, Key::Down) => 0,
+                            (None, _) => count - 1,
+                            (Some(index), Key::Down) => (index + 1) % count,
+                            (Some(index), _) => (index + count - 1) % count,
+                        };
+                        self.popup.select(Some(next));
+                        Disposition::Swallow
+                    }
+                    // Enter and Tab only insert an item the user highlighted; otherwise they
+                    // keep their usual meaning.
+                    Key::Return | Key::Tab if plain => match self.popup.selected() {
+                        Some(index) => {
+                            later(Duration::ZERO, move |app| app.insert(index));
+                            Disposition::Swallow
+                        }
+                        None => {
+                            self.popup.hide();
+                            Disposition::Pass
+                        }
+                    },
+                    Key::Escape => {
+                        self.dismissed = self.field.as_ref().map(|field| field.info.value.clone());
+                        self.popup.hide();
+                        Disposition::Swallow
+                    }
+                    _ => {
+                        if !plain {
+                            self.popup.hide();
+                        }
+                        self.schedule_refresh();
+                        Disposition::Pass
+                    }
+                }
+            }
+            InputEvent::KeyDown { .. } => {
+                self.schedule_refresh();
+                Disposition::Pass
+            }
+            InputEvent::MouseDown { x, y } => match self.popup.row_at(x, y) {
+                Some(index) => {
+                    later(Duration::ZERO, move |app| app.insert(index));
+                    Disposition::Swallow
+                }
+                None => {
+                    self.popup.hide();
+                    Disposition::Pass
+                }
+            },
+        }
+    }
+
+    fn schedule_refresh(&mut self) {
+        self.refresh_generation += 1;
+        let generation = self.refresh_generation;
+        later(REFRESH_DELAY, move |app| {
+            if app.refresh_generation == generation {
+                app.refresh();
+            }
+        });
+    }
+
+    fn refresh(&mut self) {
+        self.results.clear();
+        self.field = None;
+        let field = match focused_field() {
+            Ok(field) => field,
+            Err(error) => {
+                debug!("refresh: {error:?}");
+                self.popup.hide();
+                return;
+            }
+        };
+        let info = &field.info;
+        if !self.store.enabled || is_blocked(&field) || !self.store.runs_in(&info.app_id) {
+            debug!("refresh: {} {} is off or blocked", info.app_id, info.role);
+            self.popup.hide();
+            return;
+        };
+        if self.dismissed.as_deref() == Some(info.value.as_str()) {
+            self.popup.hide();
+            self.field = Some(field);
+            return;
+        }
+        self.dismissed = None;
+
+        // Suggestions only come up for a word typed after the trigger, such as `:xtt`.
+        let word = info
+            .caret
+            .and_then(|caret| prefixed_word_at(&info.value, caret, self.store.trigger));
+        self.results = match &word {
+            Some(word) => self.suggester().suggest(&word.text, None),
+            None => Vec::new(),
+        };
+        self.word = word;
+        debug!(
+            "refresh {} {} caret={:?} length={} word={} results={} caret_rect={} field_rect={}",
+            info.app_id,
+            info.role,
+            info.caret,
+            info.value.encode_utf16().count(),
+            self.word.is_some(),
+            self.results.len(),
+            info.caret_rect.is_some(),
+            info.field_rect.is_some()
+        );
+        match (self.results.is_empty(), info.caret_rect.or(info.field_rect)) {
+            (false, Some(anchor)) => self.popup.show(&self.results, anchor),
+            _ => self.popup.hide(),
+        }
+        self.field = Some(field);
+    }
+
+    /// The index of the enabled datasets, rebuilt after the store changes.
+    fn suggester(&mut self) -> &Suggester {
+        if !matches!(&self.suggester, Some((version, _)) if *version == self.store_version) {
+            let suggester = Suggester::new(self.store.enabled_datasets());
+            self.suggester = Some((self.store_version, suggester));
+        }
+        &self.suggester.as_ref().expect("just set").1
+    }
+
+    /// Opens Quick Search for the focused field, unless Typio must stay out of it.
+    pub fn open_palette(&mut self) {
+        self.popup.hide();
+        self.results.clear();
+        let field = match focused_field() {
+            Ok(field) => field,
+            Err(error) => {
+                info!("Quick Search has no field: {error:?}");
+                return;
+            }
+        };
+        if !self.store.enabled || is_blocked(&field) || !self.store.runs_in(&field.info.app_id) {
+            self.show_message(tr(T::OffInField), anchor_of(&field));
+            return;
+        }
+        self.palette_target = Some(field);
+        self.palette.open();
+    }
+
+    fn update_palette(&mut self) {
+        if !self.palette.is_open() {
+            return;
+        }
+        let query = self.palette.query();
+        let items = if query.trim().is_empty() {
+            Vec::new()
+        } else {
+            self.suggester().suggest(&query, None)
+        };
+        self.palette.show(items);
+    }
+
+    /// Closes Quick Search and types `value`, if any, where the caret was.
+    fn choose_palette(&mut self, value: Option<String>) {
+        self.palette.close();
+        let target = self.palette_target.take();
+        let (Some(value), Some(target)) = (value, target) else {
+            return;
+        };
+        let (pid, anchor) = (target.info.pid, anchor_of(&target));
+        // Give focus a moment to settle back in the app being typed in.
+        later(Duration::from_millis(60), move |app| {
+            let field = match focused_field() {
+                Ok(field) if field.info.pid == pid && !is_blocked(&field) => field,
+                _ => {
+                    app.show_message(tr(T::CannotTypeHere), anchor);
+                    return;
+                }
+            };
+            let Some(caret) = field.info.caret else {
+                app.show_message(tr(T::ClickWhereText), anchor_of(&field));
+                return;
+            };
+            if field.replace(caret, 0, &value).is_err() {
+                app.show_message(tr(T::CannotTypeField), anchor_of(&field));
+            }
+        });
+    }
+
+    fn insert(&mut self, index: usize) {
+        self.popup.hide();
+        let (Some(field), Some(choice), Some(word)) = (
+            self.field.take(),
+            self.results.get(index).cloned(),
+            self.word.as_ref(),
+        ) else {
+            return;
+        };
+        // The trigger and the word after it become the chosen text.
+        let original = utf16_slice(&field.info.value, word.start, word.end);
+        if field
+            .replace(word.start, word.end - word.start, &choice.value)
+            .is_err()
+        {
+            self.show_message(tr(T::CannotTypeField), anchor_of(&field));
+        } else {
+            self.last_expansion = Some(Expansion {
+                pid: field.info.pid,
+                start: word.start,
+                inserted: choice.value.clone(),
+                original,
+            });
+        }
+        self.results.clear();
+    }
+
+    /// Puts back what `expansion` replaced when the inserted text still sits right before
+    /// the caret. Returns whether it did, so the Delete is swallowed.
+    fn undo(&mut self, expansion: Expansion) -> bool {
+        let Ok(field) = focused_field() else {
+            return false;
+        };
+        let length = expansion.inserted.encode_utf16().count();
+        let end = expansion.start + length;
+        let intact = field.info.pid == expansion.pid
+            && field.info.caret == Some(end)
+            && utf16_slice(&field.info.value, expansion.start, end) == expansion.inserted;
+        if !intact {
+            return false;
+        }
+        self.undo_echo_until = Some(Instant::now() + UNDO_ECHO);
+        let start = expansion.start;
+        let original = expansion.original;
+        // Write after the tap returns, as with any insertion.
+        later(Duration::ZERO, move |app| {
+            let Ok(field) = focused_field() else {
+                return;
+            };
+            if field.replace(start, length, &original).is_err() {
+                app.show_message(tr(T::CannotTypeField), anchor_of(&field));
+            }
+        });
+        true
+    }
+
+    pub fn ui_state(&self) -> UiState {
+        let datasets = self
+            .store
+            .datasets
+            .iter()
+            .map(|dataset| DatasetRow {
+                name: dataset.name.clone(),
+                detail: match dataset.kind() {
+                    DatasetKind::Shortcuts => trf(
+                        T::ShortcutCount,
+                        &[(
+                            "count",
+                            &dataset.shortcuts.as_ref().map_or(0, Vec::len).to_string(),
+                        )],
+                    ),
+                    DatasetKind::Values => trf(
+                        T::ValueCount,
+                        &[("count", &dataset.values.len().to_string())],
+                    ),
+                },
+                enabled: self.store.is_dataset_enabled(&dataset.id),
+            })
+            .collect();
+        UiState {
+            trusted: self.has_tap(),
+            enabled: self.store.enabled,
+            trigger: self.store.trigger,
+            language: self.store.language,
+            datasets,
+            app_mode: self.store.app_mode,
+            apps: self.store.app_list().to_vec(),
+        }
+    }
+
+    /// `index` is the dataset's position in the store, as in `UiState::datasets`.
+    pub fn set_dataset_enabled(&mut self, index: usize, enabled: bool) {
+        let Some(id) = self
+            .store
+            .datasets
+            .get(index)
+            .map(|dataset| dataset.id.clone())
+        else {
+            return;
+        };
+        self.store.set_dataset_enabled(&id, enabled);
+        self.store_changed();
+    }
+
+    pub fn remove_dataset(&mut self, index: usize) {
+        let Some(id) = self
+            .store
+            .datasets
+            .get(index)
+            .map(|dataset| dataset.id.clone())
+        else {
+            return;
+        };
+        self.store.remove_dataset(&id);
+        self.store_changed();
+    }
+
+    /// Skips or stops skipping the app in front (all-apps mode), or adds it to or removes it
+    /// from the selected apps; from the menu, with a notice at the caret.
+    pub fn toggle_frontmost_app(&mut self) {
+        let Some((id, name)) = frontmost_app() else {
+            return;
+        };
+        let listed = !self.store.is_listed(&id);
+        self.store.set_listed(&id, &name, listed);
+        self.store_changed();
+        let message = if self.store.runs_in(&id) {
+            trf(T::OnInApp, &[("name", &name)])
+        } else {
+            trf(T::OffInApp, &[("name", &name)])
+        };
+        let anchor = focused_field().ok().as_ref().and_then(anchor_of);
+        self.show_message(&message, anchor);
+    }
+
+    pub fn add_app(&mut self, id: &str, name: &str) {
+        self.store.set_listed(id, name, true);
+        self.store_changed();
+    }
+
+    pub fn remove_app(&mut self, index: usize) {
+        self.store.remove_listed(index);
+        self.store_changed();
+    }
+
+    pub fn set_app_mode(&mut self, mode: AppMode) {
+        self.store.app_mode = mode;
+        self.store_changed();
+    }
+
+    /// Saves a dataset from the editor; see `Store::save_dataset`.
+    pub fn save_dataset(
+        &mut self,
+        id: Option<&str>,
+        name: &str,
+        kind: DatasetKind,
+        text: &str,
+    ) -> Result<Vec<String>, String> {
+        let (_, warnings) = self.store.save_dataset(id, name, kind, text)?;
+        self.store_changed();
+        Ok(warnings)
+    }
+
+    pub fn set_language(&mut self, language: Language) {
+        self.store.language = language;
+        crate::i18n::set(language);
+        self.store_changed();
+    }
+
+    pub fn set_trigger(&mut self, trigger: char) {
+        self.store.trigger = trigger;
+        self.store_changed();
+    }
+
+    /// Turns Typio on or off in every text field (⌃⌥T or the menu).
+    pub fn toggle_enabled(&mut self) {
+        self.store.enabled = !self.store.enabled;
+        self.store_changed();
+        info!("Typio enabled: {}", self.store.enabled);
+        let message = match (self.store.enabled, self.store.datasets.is_empty()) {
+            (true, true) => tr(T::TurnedOnImport),
+            (true, false) => tr(T::TurnedOn),
+            (false, _) => tr(T::TurnedOff),
+        };
+        let anchor = focused_field().ok().as_ref().and_then(anchor_of);
+        self.show_message(message, anchor);
+    }
+
+    fn show_message(&mut self, text: &str, anchor: Option<Rect>) {
+        let Some(anchor) = anchor else {
+            return;
+        };
+        self.results.clear();
+        self.popup.show_message(text, anchor);
+        self.message_generation += 1;
+        let generation = self.message_generation;
+        later(MESSAGE_DURATION, move |app| {
+            if app.message_generation == generation && app.results.is_empty() {
+                app.popup.hide();
+            }
+        });
+    }
+}
+
+fn utf16_slice(text: &str, start: usize, end: usize) -> String {
+    let units: Vec<u16> = text.encode_utf16().collect();
+    let end = end.min(units.len());
+    String::from_utf16_lossy(&units[start.min(end)..end])
+}
+
+fn anchor_of(field: &Field) -> Option<Rect> {
+    field.info.caret_rect.or(field.info.field_rect)
+}
+
+/// Password fields and fields labelled like secrets never get suggestions.
+fn is_blocked(field: &Field) -> bool {
+    field.info.secure
+        || is_sensitive_label(&format!("{} {}", field.info.identifier, field.info.label))
+}
+
+/// Starts a fresh copy of the app bundle and quits this one.
+fn relaunch() {
+    let executable = std::env::current_exe().unwrap_or_default();
+    // …/Typio.app/Contents/MacOS/Typio
+    let Some(bundle) = executable
+        .ancestors()
+        .nth(3)
+        .filter(|path| path.extension().is_some_and(|ext| ext == "app"))
+    else {
+        info!("Not running from an app bundle; quit and reopen Typio to finish enabling it");
+        return;
+    };
+    let mut command = std::process::Command::new("/usr/bin/open");
+    command.arg("-n").arg(bundle);
+    // Keep development settings for the new process.
+    for name in ["TYPIO_DATA_DIR", "TYPIO_DEBUG"] {
+        if let Some(value) = std::env::var_os(name) {
+            command
+                .arg("--env")
+                .arg(format!("{name}={}", value.to_string_lossy()));
+        }
+    }
+    match command.spawn() {
+        Ok(_) => {
+            info!("Relaunching to finish enabling Accessibility access");
+            std::process::exit(0);
+        }
+        Err(error) => info!("Could not relaunch: {error}; quit and reopen Typio"),
+    }
+}
