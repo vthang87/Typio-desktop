@@ -1,7 +1,8 @@
 name: Release
 
 # Runs when a pull request from dev is merged into main. Releases the version in Cargo.toml
-# once, for macOS and Windows: bump it before merging to release again.
+# once, for macOS and Windows: bump it before merging to release again. Assets keep fixed
+# names (Typio-macos.zip, Typio-windows.zip) so releases/latest/download/<name> always works.
 on:
   push:
     branches: [main]
@@ -65,11 +66,11 @@ jobs:
           TYPIO_UNIVERSAL: "1"
           TYPIO_NO_INSTALL: "1"
       - name: Zip
-        run: ditto -c -k --keepParent target/release/Typio.app "Typio-${{ needs.version.outputs.version }}-macos.zip"
+        run: ditto -c -k --keepParent target/release/Typio.app "Typio-macos.zip"
       - uses: actions/upload-artifact@v4
         with:
           name: macos
-          path: Typio-${{ needs.version.outputs.version }}-macos.zip
+          path: Typio-macos.zip
           if-no-files-found: error
 
   windows:
@@ -90,11 +91,11 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force dist/Typio | Out-Null
           Copy-Item target/release/typio-app.exe dist/Typio/Typio.exe
-          Compress-Archive -Path dist/Typio -DestinationPath "Typio-${{ needs.version.outputs.version }}-windows.zip"
+          Compress-Archive -Path dist/Typio -DestinationPath "Typio-windows.zip"
       - uses: actions/upload-artifact@v4
         with:
           name: windows
-          path: Typio-${{ needs.version.outputs.version }}-windows.zip
+          path: Typio-windows.zip
           if-no-files-found: error
 
   publish:
