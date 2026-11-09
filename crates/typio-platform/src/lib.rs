@@ -1,13 +1,18 @@
 //! Operating-system access for Typio: the text field the user is typing in, global key
-//! and mouse events, and writing text back. Only macOS is implemented so far.
+//! and mouse events, and writing text back, on macOS and Windows.
 //!
-//! Screen coordinates are in points with the origin at the top-left of the primary
-//! display, which is what macOS Accessibility and Windows UI Automation both report.
+//! Screen coordinates have their origin at the top-left of the primary display, which is
+//! what macOS Accessibility and Windows UI Automation both report: points on macOS,
+//! physical pixels on Windows (the app is per-monitor DPI aware).
 
 #[cfg(target_os = "macos")]
 mod macos;
 #[cfg(target_os = "macos")]
 pub use macos::*;
+#[cfg(windows)]
+mod windows;
+#[cfg(windows)]
+pub use windows::*;
 
 /// A rectangle in screen points, origin top-left of the primary display.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
