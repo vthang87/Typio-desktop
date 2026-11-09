@@ -9,7 +9,7 @@ use dispatch2::{DispatchQueue, DispatchTime};
 use objc2::MainThreadMarker;
 use typio_core::engine::{prefixed_word_at, Suggester, WordRange};
 use typio_core::sensitive::is_sensitive_label;
-use typio_core::RankedSuggestion;
+use typio_core::{DatasetKind, RankedSuggestion};
 use typio_platform::{focused_field, Disposition, EventTap, Field, InputEvent, Key, Rect};
 
 use crate::popup::Popup;
@@ -21,6 +21,37 @@ const MESSAGE_DURATION: Duration = Duration::from_millis(1600);
 
 thread_local! {
     static APP: RefCell<Option<App>> = const { RefCell::new(None) };
+}
+
+/// What the menu bar icon, the menu and the Settings window show.
+pub struct UiState {
+    /// Accessibility access is granted and Typio is listening.
+    pub trusted: bool,
+    pub enabled: bool,
+    pub trigger: char,
+    pub datasets: Vec<DatasetRow>,
+}
+
+pub struct DatasetRow {
+    pub name: String,
+    /// For example "99 shortcuts".
+    pub detail: String,
+    pub enabled: bool,
+}
+
+/// Brings the menu bar icon and the Settings window up to date, right after the current
+/// event finishes.
+pub fn refresh_ui() {
+    let _ = DispatchQueue::main().after(DispatchTime::NOW, || {
+        let Some(mtm) = MainThreadMarker::new() else {
+            return;
+        };
+        let Some(state) = with_app(|app| app.ui_state()) else {
+            return;
+        };
+        crate::menu::update_icon(mtm, &state);
+        crate::settings::update(mtm, &state);
+    });
 }
 
 pub struct App {
@@ -110,6 +141,7 @@ impl App {
                 Ok(tap) => {
                     info!("Event tap installed");
                     self.tap = Some(tap);
+                    refresh_ui();
                 }
                 Err(error) => info!("Event tap failed: {error}"),
             }
@@ -121,6 +153,7 @@ impl App {
 
     pub fn store_changed(&mut self) {
         self.store_version += 1;
+        refresh_ui();
         if let Err(error) = self.store.save() {
             info!("Could not save data: {error}");
         }
@@ -232,7 +265,7 @@ impl App {
         self.dismissed = None;
 
         if !matches!(&self.suggester, Some((version, _)) if *version == self.store_version) {
-            let suggester = Suggester::new(&self.store.datasets);
+            let suggester = Suggester::new(self.store.enabled_datasets());
             self.suggester = Some((self.store_version, suggester));
         }
         let Some((_, suggester)) = &self.suggester else {
@@ -242,7 +275,7 @@ impl App {
         // Suggestions only come up for a word typed after a colon, such as `:xtt`.
         self.word = info
             .caret
-            .and_then(|caret| prefixed_word_at(&info.value, caret));
+            .and_then(|caret| prefixed_word_at(&info.value, caret, self.store.trigger));
         self.results = match &self.word {
             Some(word) => suggester.suggest(&word.text, None),
             None => Vec::new(),
@@ -282,6 +315,63 @@ impl App {
             self.show_message("Typio can’t type into this field", anchor_of(&field));
         }
         self.results.clear();
+    }
+
+    pub fn ui_state(&self) -> UiState {
+        let datasets = self
+            .store
+            .datasets
+            .iter()
+            .map(|dataset| DatasetRow {
+                name: dataset.name.clone(),
+                detail: match dataset.kind() {
+                    DatasetKind::Shortcuts => format!(
+                        "{} shortcuts",
+                        dataset.shortcuts.as_ref().map_or(0, Vec::len)
+                    ),
+                    DatasetKind::Values => format!("{} values", dataset.values.len()),
+                },
+                enabled: self.store.is_dataset_enabled(&dataset.id),
+            })
+            .collect();
+        UiState {
+            trusted: self.has_tap(),
+            enabled: self.store.enabled,
+            trigger: self.store.trigger,
+            datasets,
+        }
+    }
+
+    /// `index` is the dataset's position in the store, as in `UiState::datasets`.
+    pub fn set_dataset_enabled(&mut self, index: usize, enabled: bool) {
+        let Some(id) = self
+            .store
+            .datasets
+            .get(index)
+            .map(|dataset| dataset.id.clone())
+        else {
+            return;
+        };
+        self.store.set_dataset_enabled(&id, enabled);
+        self.store_changed();
+    }
+
+    pub fn remove_dataset(&mut self, index: usize) {
+        let Some(id) = self
+            .store
+            .datasets
+            .get(index)
+            .map(|dataset| dataset.id.clone())
+        else {
+            return;
+        };
+        self.store.remove_dataset(&id);
+        self.store_changed();
+    }
+
+    pub fn set_trigger(&mut self, trigger: char) {
+        self.store.trigger = trigger;
+        self.store_changed();
     }
 
     /// Turns Typio on or off in every text field (⌃⌥T or the menu).

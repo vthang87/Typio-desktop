@@ -1,5 +1,5 @@
 //! Typio for macOS: a menu bar app that suggests values and expands shortcuts in the text
-//! fields the user turns it on for.
+//! fields, for a word typed after a trigger character such as `:xtt`.
 
 /// Always logged: start-up, permissions and failures. Never pass typed text or field values.
 macro_rules! info {
@@ -24,6 +24,8 @@ mod log;
 mod menu;
 #[cfg(target_os = "macos")]
 mod popup;
+#[cfg(target_os = "macos")]
+mod settings;
 mod store;
 
 #[cfg(target_os = "macos")]
@@ -52,7 +54,8 @@ fn main() {
         }
     };
     controller::install(store, mtm);
-    let _menu = menu::install(mtm);
+    menu::install(mtm);
+    controller::refresh_ui();
     let executable = std::env::current_exe().unwrap_or_default();
     info!(
         "Typio {} started from {}; Accessibility access: {}",
