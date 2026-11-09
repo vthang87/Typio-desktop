@@ -16,7 +16,7 @@ use typio_platform::{
 
 use crate::palette::Palette;
 use crate::popup::Popup;
-use crate::store::{BlockedApp, Store};
+use crate::store::{AppMode, AppRef, Store};
 
 /// Some input methods send each key twice; extra Deletes this soon after an undo are
 /// dropped so they do not eat into the restored text.
@@ -47,7 +47,9 @@ pub struct UiState {
     pub enabled: bool,
     pub trigger: char,
     pub datasets: Vec<DatasetRow>,
-    pub blocked_apps: Vec<BlockedApp>,
+    pub app_mode: AppMode,
+    /// Skipped apps in `AppMode::All`, selected apps in `AppMode::Selected`.
+    pub apps: Vec<AppRef>,
 }
 
 pub struct DatasetRow {
@@ -338,7 +340,7 @@ impl App {
             }
         };
         let info = &field.info;
-        if !self.store.enabled || is_blocked(&field) || self.store.is_app_blocked(&info.app_id) {
+        if !self.store.enabled || is_blocked(&field) || !self.store.runs_in(&info.app_id) {
             debug!("refresh: {} {} is off or blocked", info.app_id, info.role);
             self.popup.hide();
             return;
@@ -397,10 +399,7 @@ impl App {
                 return;
             }
         };
-        if !self.store.enabled
-            || is_blocked(&field)
-            || self.store.is_app_blocked(&field.info.app_id)
-        {
+        if !self.store.enabled || is_blocked(&field) || !self.store.runs_in(&field.info.app_id) {
             self.show_message("Typio is off in this field", anchor_of(&field));
             return;
         }
@@ -529,7 +528,8 @@ impl App {
             enabled: self.store.enabled,
             trigger: self.store.trigger,
             datasets,
-            blocked_apps: self.store.blocked_apps.clone(),
+            app_mode: self.store.app_mode,
+            apps: self.store.app_list().to_vec(),
         }
     }
 
@@ -560,28 +560,37 @@ impl App {
         self.store_changed();
     }
 
-    /// Blocks or unblocks the app in front (the menu), with a notice at the caret.
+    /// Skips or stops skipping the app in front (all-apps mode), or adds it to or removes it
+    /// from the selected apps; from the menu, with a notice at the caret.
     pub fn toggle_frontmost_app(&mut self) {
         let Some((id, name)) = frontmost_app() else {
             return;
         };
-        let blocked = !self.store.is_app_blocked(&id);
-        self.store.set_app_blocked(&id, &name, blocked);
+        let listed = !self.store.is_listed(&id);
+        self.store.set_listed(&id, &name, listed);
         self.store_changed();
-        let message = if blocked {
-            format!("Typio off in {name}")
-        } else {
+        let message = if self.store.runs_in(&id) {
             format!("Typio on in {name}")
+        } else {
+            format!("Typio off in {name}")
         };
         let anchor = focused_field().ok().as_ref().and_then(anchor_of);
         self.show_message(&message, anchor);
     }
 
-    pub fn unblock_app(&mut self, index: usize) {
-        if index < self.store.blocked_apps.len() {
-            self.store.blocked_apps.remove(index);
-            self.store_changed();
-        }
+    pub fn add_app(&mut self, id: &str, name: &str) {
+        self.store.set_listed(id, name, true);
+        self.store_changed();
+    }
+
+    pub fn remove_app(&mut self, index: usize) {
+        self.store.remove_listed(index);
+        self.store_changed();
+    }
+
+    pub fn set_app_mode(&mut self, mode: AppMode) {
+        self.store.app_mode = mode;
+        self.store_changed();
     }
 
     /// Saves a dataset from the editor; see `Store::save_dataset`.

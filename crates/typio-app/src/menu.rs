@@ -3,7 +3,7 @@
 use std::cell::RefCell;
 
 use crate::controller::{with_app, UiState};
-use crate::store::Store;
+use crate::store::{AppMode, Store};
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, NSObject, NSObjectProtocol, Sel};
 use objc2::{define_class, msg_send, sel, MainThreadMarker, MainThreadOnly};
@@ -94,7 +94,8 @@ impl MenuTarget {
             trusted,
             enabled,
             datasets,
-            blocked_apps,
+            app_mode,
+            apps,
             ..
         }) = with_app(|app| app.ui_state())
         else {
@@ -140,11 +141,12 @@ impl MenuTarget {
             if let Some((id, name)) =
                 typio_platform::frontmost_app().filter(|(id, _)| id != OWN_BUNDLE_ID)
             {
-                let blocked = blocked_apps.iter().any(|app| app.id == id);
-                let title = if blocked {
-                    format!("Turn On in {name}")
-                } else {
-                    format!("Turn Off in {name}")
+                let listed = apps.iter().any(|app| app.id == id);
+                let title = match (app_mode, listed) {
+                    (AppMode::All, false) => format!("Skip {name}"),
+                    (AppMode::All, true) => format!("Stop Skipping {name}"),
+                    (AppMode::Selected, false) => format!("Run in {name}"),
+                    (AppMode::Selected, true) => format!("Stop Running in {name}"),
                 };
                 menu.addItem(&self.item(mtm, &title, Some(sel!(toggleFrontmostApp:))));
             }
