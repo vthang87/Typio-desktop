@@ -25,6 +25,8 @@ mod log;
 #[cfg(target_os = "macos")]
 mod menu;
 #[cfg(target_os = "macos")]
+mod palette;
+#[cfg(target_os = "macos")]
 mod popup;
 #[cfg(target_os = "macos")]
 mod settings;
