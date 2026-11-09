@@ -2,8 +2,9 @@
 # Builds target/release/Typio.app and installs a copy in ~/Applications. macOS does not keep
 # Accessibility access for apps run from external drives, so always run the installed copy.
 # macOS also ties Accessibility access to the app's signature:
-# set TYPIO_SIGN_IDENTITY to a code signing identity to keep access across rebuilds.
-# Without one the app is signed ad hoc and access must be granted again after each build.
+# builds signed with the same certificate keep access. The script signs with
+# TYPIO_SIGN_IDENTITY, else with "Typio Self-Signed" when it is in the keychain (see
+# scripts/make-signing-cert.sh), else ad hoc, which needs access granted again after each build.
 #
 # TYPIO_UNIVERSAL=1 builds one binary for Apple silicon and Intel Macs.
 # TYPIO_NO_INSTALL=1 only builds the app, as CI does.
@@ -50,7 +51,12 @@ cat > "$app/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-codesign --force --sign "${TYPIO_SIGN_IDENTITY:--}" "$app"
+identity="${TYPIO_SIGN_IDENTITY:-}"
+if [ -z "$identity" ] && security find-identity -v -p codesigning 2>/dev/null | grep -q '"Typio Self-Signed"'; then
+  identity="Typio Self-Signed"
+fi
+codesign --force --sign "${identity:--}" "$app"
+echo "Signed with ${identity:-an ad hoc signature}"
 
 if [ "${TYPIO_NO_INSTALL:-}" = 1 ]; then
   echo "Built $app"

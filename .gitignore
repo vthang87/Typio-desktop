@@ -1,2 +1,7 @@
 /target
 .DS_Store
+
+# Signing certificates
+*.p12
+*.cer
+*.pem
