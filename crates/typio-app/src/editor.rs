@@ -15,15 +15,16 @@ use typio_core::import::format_dataset_export;
 use typio_core::DatasetKind;
 
 use crate::controller::with_app;
+use crate::i18n::{tr, trf, T};
 use crate::menu;
 use crate::settings::{add, button, label, rect, secondary, FlippedView};
 
 const WIDTH: f64 = 560.0;
 const HEIGHT: f64 = 480.0;
 const MARGIN: f64 = 16.0;
-const KINDS: [(DatasetKind, &str); 2] = [
-    (DatasetKind::Shortcuts, "Shortcuts"),
-    (DatasetKind::Values, "Values"),
+const KINDS: [(DatasetKind, T); 2] = [
+    (DatasetKind::Shortcuts, T::KindShortcuts),
+    (DatasetKind::Values, T::KindValues),
 ];
 
 thread_local! {
@@ -102,8 +103,8 @@ pub fn open(mtm: MainThreadMarker, index: Option<usize>) {
     };
     unsafe { window.setReleasedWhenClosed(false) };
     let title = match &dataset {
-        Some((_, name, _, _)) => format!("Edit “{name}”"),
-        None => "New Dataset".to_string(),
+        Some((_, name, _, _)) => trf(T::EditTitle, &[("name", name)]),
+        None => tr(T::NewDataset).to_string(),
     };
     window.setTitle(&NSString::from_str(&title));
 
@@ -113,7 +114,7 @@ pub fn open(mtm: MainThreadMarker, index: Option<usize>) {
 
     add(
         &content,
-        &label(mtm, "Name", rect(MARGIN, 19.0, 70.0, 18.0)),
+        &label(mtm, tr(T::NameLabel), rect(MARGIN, 19.0, 70.0, 18.0)),
     );
     let name = NSTextField::textFieldWithString(
         &NSString::from_str(dataset.as_ref().map_or("", |(_, name, _, _)| name)),
@@ -124,7 +125,7 @@ pub fn open(mtm: MainThreadMarker, index: Option<usize>) {
 
     add(
         &content,
-        &label(mtm, "Type", rect(MARGIN, 55.0, 70.0, 18.0)),
+        &label(mtm, tr(T::TypeLabel), rect(MARGIN, 55.0, 70.0, 18.0)),
     );
     let kind = NSPopUpButton::initWithFrame_pullsDown(
         NSPopUpButton::alloc(mtm),
@@ -132,7 +133,7 @@ pub fn open(mtm: MainThreadMarker, index: Option<usize>) {
         false,
     );
     for (_, title) in KINDS {
-        kind.addItemWithTitle(&NSString::from_str(title));
+        kind.addItemWithTitle(&NSString::from_str(tr(title)));
     }
     if let Some((_, _, existing, _)) = &dataset {
         let index = KINDS
@@ -145,11 +146,7 @@ pub fn open(mtm: MainThreadMarker, index: Option<usize>) {
     }
     add(&content, &kind);
 
-    let help = secondary(
-        mtm,
-        "Shortcuts: one per line as trigger: text, for example xtt: Xã Tam Tiến.\nValues: one value per line.",
-        rect(MARGIN, 86.0, inner, 34.0),
-    );
+    let help = secondary(mtm, tr(T::EditorHelp), rect(MARGIN, 86.0, inner, 34.0));
     add(&content, &help);
 
     let scroll = NSTextView::scrollableTextView(mtm);
@@ -178,7 +175,7 @@ pub fn open(mtm: MainThreadMarker, index: Option<usize>) {
         &content,
         &button(
             mtm,
-            "Cancel",
+            tr(T::CancelButton),
             &target,
             sel!(cancel:),
             rect(WIDTH - MARGIN - 196.0, buttons_top, 96.0, 32.0),
@@ -186,7 +183,7 @@ pub fn open(mtm: MainThreadMarker, index: Option<usize>) {
     );
     let save = button(
         mtm,
-        "Save",
+        tr(T::SaveButton),
         &target,
         sel!(save:),
         rect(WIDTH - MARGIN - 96.0, buttons_top, 96.0, 32.0),
@@ -198,7 +195,7 @@ pub fn open(mtm: MainThreadMarker, index: Option<usize>) {
         &content,
         &secondary(
             mtm,
-            "⌘S saves",
+            tr(T::SaveHint),
             rect(MARGIN, buttons_top + 9.0, 200.0, 16.0),
         ),
     );
@@ -244,17 +241,16 @@ fn save(mtm: MainThreadMarker) {
             if !warnings.is_empty() {
                 let mut shown: Vec<String> = warnings.iter().take(10).cloned().collect();
                 if warnings.len() > shown.len() {
-                    shown.push(format!("…and {} more.", warnings.len() - shown.len()));
+                    shown.push(trf(
+                        T::AndMore,
+                        &[("count", &(warnings.len() - shown.len()).to_string())],
+                    ));
                 }
-                menu::alert(
-                    mtm,
-                    "Saved. Some triggers are used twice",
-                    &shown.join("\n"),
-                );
+                menu::alert(mtm, tr(T::SavedWithWarnings), &shown.join("\n"));
             }
         }
-        Some(Err(reason)) => menu::alert(mtm, "Typio could not save this dataset", &reason),
-        None => menu::alert(mtm, "Typio is busy", "Try saving again."),
+        Some(Err(reason)) => menu::alert(mtm, tr(T::CannotSaveDataset), &reason),
+        None => menu::alert(mtm, tr(T::Busy), tr(T::TrySavingAgain)),
     }
 }
 

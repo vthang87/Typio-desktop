@@ -3,6 +3,7 @@
 use std::cell::RefCell;
 
 use crate::controller::{with_app, UiState};
+use crate::i18n::{tr, trf, T};
 use crate::store::{AppMode, Store};
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, NSObject, NSObjectProtocol, Sel};
@@ -103,20 +104,20 @@ impl MenuTarget {
         };
 
         if !trusted {
-            menu.addItem(&self.item(mtm, "Typio needs Accessibility access", None));
+            menu.addItem(&self.item(mtm, tr(T::NeedsAccess), None));
             menu.addItem(&self.item(
                 mtm,
-                "Open Accessibility Settings…",
+                tr(T::OpenAccessibilitySettings),
                 Some(sel!(openAccessibilitySettings:)),
             ));
         } else {
             let status = if enabled {
-                "Typio is on"
+                tr(T::StatusOn)
             } else {
-                "Typio is off"
+                tr(T::StatusOff)
             };
             menu.addItem(&self.item(mtm, status, None));
-            let toggle = self.item(mtm, "Enable Typio", Some(sel!(toggleEnabled:)));
+            let toggle = self.item(mtm, tr(T::EnableTypio), Some(sel!(toggleEnabled:)));
             toggle.setState(if enabled {
                 NSControlStateValueOn
             } else {
@@ -129,7 +130,7 @@ impl MenuTarget {
             );
             menu.addItem(&toggle);
 
-            let search = self.item(mtm, "Quick Search", Some(sel!(openQuickSearch:)));
+            let search = self.item(mtm, tr(T::QuickSearch), Some(sel!(openQuickSearch:)));
             search.setKeyEquivalent(&NSString::from_str(" "));
             search.setKeyEquivalentModifierMask(
                 objc2_app_kit::NSEventModifierFlags::Control
@@ -143,10 +144,10 @@ impl MenuTarget {
             {
                 let listed = apps.iter().any(|app| app.id == id);
                 let title = match (app_mode, listed) {
-                    (AppMode::All, false) => format!("Skip {name}"),
-                    (AppMode::All, true) => format!("Stop Skipping {name}"),
-                    (AppMode::Selected, false) => format!("Run in {name}"),
-                    (AppMode::Selected, true) => format!("Stop Running in {name}"),
+                    (AppMode::All, false) => trf(T::SkipApp, &[("name", &name)]),
+                    (AppMode::All, true) => trf(T::StopSkippingApp, &[("name", &name)]),
+                    (AppMode::Selected, false) => trf(T::RunInApp, &[("name", &name)]),
+                    (AppMode::Selected, true) => trf(T::StopRunningInApp, &[("name", &name)]),
                 };
                 menu.addItem(&self.item(mtm, &title, Some(sel!(toggleFrontmostApp:))));
             }
@@ -154,9 +155,9 @@ impl MenuTarget {
 
         menu.addItem(&NSMenuItem::separatorItem(mtm));
         if datasets.is_empty() {
-            menu.addItem(&self.item(mtm, "No datasets yet", None));
+            menu.addItem(&self.item(mtm, tr(T::NoDatasets), None));
         } else {
-            menu.addItem(&self.item(mtm, "Datasets", None));
+            menu.addItem(&self.item(mtm, tr(T::TabDatasets), None));
             for (index, dataset) in datasets.iter().enumerate() {
                 let item = self.item(
                     mtm,
@@ -172,13 +173,13 @@ impl MenuTarget {
                 menu.addItem(&item);
             }
         }
-        menu.addItem(&self.item(mtm, "Import Dataset…", Some(sel!(importDataset:))));
+        menu.addItem(&self.item(mtm, tr(T::ImportDataset), Some(sel!(importDataset:))));
         menu.addItem(&NSMenuItem::separatorItem(mtm));
-        let settings = self.item(mtm, "Settings…", Some(sel!(openSettings:)));
+        let settings = self.item(mtm, tr(T::SettingsItem), Some(sel!(openSettings:)));
         settings.setKeyEquivalent(&NSString::from_str(","));
         menu.addItem(&settings);
         menu.addItem(&NSMenuItem::separatorItem(mtm));
-        let quit = self.item(mtm, "Quit Typio", Some(sel!(terminate:)));
+        let quit = self.item(mtm, tr(T::Quit), Some(sel!(terminate:)));
         unsafe { quit.setTarget(None) };
         quit.setKeyEquivalent(&NSString::from_str("q"));
         menu.addItem(&quit);
@@ -234,13 +235,9 @@ pub fn install(mtm: MainThreadMarker) {
 /// On: the Typio symbol. Off: the same, dimmed. No Accessibility access: a warning sign.
 pub fn update_icon(mtm: MainThreadMarker, state: &UiState) {
     let (symbol, dimmed, tip) = match (state.trusted, state.enabled) {
-        (false, _) => (
-            "exclamationmark.triangle",
-            false,
-            "Typio needs Accessibility access",
-        ),
-        (true, true) => ("character.cursor.ibeam", false, "Typio is on"),
-        (true, false) => ("character.cursor.ibeam", true, "Typio is off"),
+        (false, _) => ("exclamationmark.triangle", false, tr(T::NeedsAccess)),
+        (true, true) => ("character.cursor.ibeam", false, tr(T::StatusOn)),
+        (true, false) => ("character.cursor.ibeam", true, tr(T::StatusOff)),
     };
     STATUS.with_borrow(|status| {
         if let Some(status) = status {
@@ -303,9 +300,7 @@ pub fn import_datasets(mtm: MainThreadMarker) {
     NSApplication::sharedApplication(mtm).activate();
     let panel = NSOpenPanel::openPanel(mtm);
     panel.setAllowsMultipleSelection(true);
-    panel.setMessage(Some(&NSString::from_str(
-        "Choose TXT, CSV or JSON files, or a Typio extension backup.",
-    )));
+    panel.setMessage(Some(&NSString::from_str(tr(T::ChooseImportFiles))));
     if panel.runModal() != NSModalResponseOK {
         return;
     }
@@ -327,10 +322,10 @@ pub fn import_datasets(mtm: MainThreadMarker) {
         messages.push(match result {
             Some(Ok(message)) => message,
             Some(Err(error)) => format!("{name}: {error}"),
-            None => format!("{name}: Typio is busy, try again."),
+            None => trf(T::ImportBusy, &[("name", &name)]),
         });
     }
-    alert(mtm, "Import finished", &messages.join("\n"));
+    alert(mtm, tr(T::ImportFinished), &messages.join("\n"));
 }
 
 pub fn open_data_folder() {

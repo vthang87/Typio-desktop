@@ -14,6 +14,7 @@ use typio_platform::{
     focused_field, frontmost_app, Disposition, EventTap, Field, InputEvent, Key, Rect,
 };
 
+use crate::i18n::{tr, trf, Language, T};
 use crate::palette::Palette;
 use crate::popup::Popup;
 use crate::store::{AppMode, AppRef, Store};
@@ -46,6 +47,7 @@ pub struct UiState {
     pub trusted: bool,
     pub enabled: bool,
     pub trigger: char,
+    pub language: Language,
     pub datasets: Vec<DatasetRow>,
     pub app_mode: AppMode,
     /// Skipped apps in `AppMode::All`, selected apps in `AppMode::Selected`.
@@ -400,7 +402,7 @@ impl App {
             }
         };
         if !self.store.enabled || is_blocked(&field) || !self.store.runs_in(&field.info.app_id) {
-            self.show_message("Typio is off in this field", anchor_of(&field));
+            self.show_message(tr(T::OffInField), anchor_of(&field));
             return;
         }
         self.palette_target = Some(field);
@@ -433,19 +435,16 @@ impl App {
             let field = match focused_field() {
                 Ok(field) if field.info.pid == pid && !is_blocked(&field) => field,
                 _ => {
-                    app.show_message("Typio can’t type here", anchor);
+                    app.show_message(tr(T::CannotTypeHere), anchor);
                     return;
                 }
             };
             let Some(caret) = field.info.caret else {
-                app.show_message(
-                    "Click where the text should go, then try again",
-                    anchor_of(&field),
-                );
+                app.show_message(tr(T::ClickWhereText), anchor_of(&field));
                 return;
             };
             if field.replace(caret, 0, &value).is_err() {
-                app.show_message("Typio can’t type into this field", anchor_of(&field));
+                app.show_message(tr(T::CannotTypeField), anchor_of(&field));
             }
         });
     }
@@ -465,7 +464,7 @@ impl App {
             .replace(word.start, word.end - word.start, &choice.value)
             .is_err()
         {
-            self.show_message("Typio can’t type into this field", anchor_of(&field));
+            self.show_message(tr(T::CannotTypeField), anchor_of(&field));
         } else {
             self.last_expansion = Some(Expansion {
                 pid: field.info.pid,
@@ -500,7 +499,7 @@ impl App {
                 return;
             };
             if field.replace(start, length, &original).is_err() {
-                app.show_message("Typio can’t type into this field", anchor_of(&field));
+                app.show_message(tr(T::CannotTypeField), anchor_of(&field));
             }
         });
         true
@@ -514,11 +513,17 @@ impl App {
             .map(|dataset| DatasetRow {
                 name: dataset.name.clone(),
                 detail: match dataset.kind() {
-                    DatasetKind::Shortcuts => format!(
-                        "{} shortcuts",
-                        dataset.shortcuts.as_ref().map_or(0, Vec::len)
+                    DatasetKind::Shortcuts => trf(
+                        T::ShortcutCount,
+                        &[(
+                            "count",
+                            &dataset.shortcuts.as_ref().map_or(0, Vec::len).to_string(),
+                        )],
                     ),
-                    DatasetKind::Values => format!("{} values", dataset.values.len()),
+                    DatasetKind::Values => trf(
+                        T::ValueCount,
+                        &[("count", &dataset.values.len().to_string())],
+                    ),
                 },
                 enabled: self.store.is_dataset_enabled(&dataset.id),
             })
@@ -527,6 +532,7 @@ impl App {
             trusted: self.has_tap(),
             enabled: self.store.enabled,
             trigger: self.store.trigger,
+            language: self.store.language,
             datasets,
             app_mode: self.store.app_mode,
             apps: self.store.app_list().to_vec(),
@@ -570,9 +576,9 @@ impl App {
         self.store.set_listed(&id, &name, listed);
         self.store_changed();
         let message = if self.store.runs_in(&id) {
-            format!("Typio on in {name}")
+            trf(T::OnInApp, &[("name", &name)])
         } else {
-            format!("Typio off in {name}")
+            trf(T::OffInApp, &[("name", &name)])
         };
         let anchor = focused_field().ok().as_ref().and_then(anchor_of);
         self.show_message(&message, anchor);
@@ -606,6 +612,12 @@ impl App {
         Ok(warnings)
     }
 
+    pub fn set_language(&mut self, language: Language) {
+        self.store.language = language;
+        crate::i18n::set(language);
+        self.store_changed();
+    }
+
     pub fn set_trigger(&mut self, trigger: char) {
         self.store.trigger = trigger;
         self.store_changed();
@@ -617,9 +629,9 @@ impl App {
         self.store_changed();
         info!("Typio enabled: {}", self.store.enabled);
         let message = match (self.store.enabled, self.store.datasets.is_empty()) {
-            (true, true) => "Typio on. Import a dataset from the menu bar.",
-            (true, false) => "Typio on",
-            (false, _) => "Typio off",
+            (true, true) => tr(T::TurnedOnImport),
+            (true, false) => tr(T::TurnedOn),
+            (false, _) => tr(T::TurnedOff),
         };
         let anchor = focused_field().ok().as_ref().and_then(anchor_of);
         self.show_message(message, anchor);

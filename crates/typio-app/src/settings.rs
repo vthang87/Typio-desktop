@@ -14,6 +14,7 @@ use objc2_app_kit::{
 use objc2_foundation::{NSBundle, NSPoint, NSRect, NSSize, NSString, NSURL};
 
 use crate::controller::{with_app, UiState};
+use crate::i18n::{tr, trf, Language, T};
 use crate::menu;
 use crate::store::{AppMode, TRIGGERS};
 
@@ -89,6 +90,15 @@ define_class!(
             };
             if confirm_delete(self.mtm(), &name) {
                 with_app(|app| app.remove_dataset(index));
+            }
+        }
+
+        #[unsafe(method(changeLanguage:))]
+        fn change_language(&self, sender: Option<&AnyObject>) {
+            let Some(sender) = sender else { return };
+            let index: isize = unsafe { msg_send![sender, indexOfSelectedItem] };
+            if let Some(&language) = usize::try_from(index).ok().and_then(|index| Language::ALL.get(index)) {
+                with_app(|app| app.set_language(language));
             }
         }
 
@@ -183,7 +193,7 @@ pub fn show(mtm: MainThreadMarker) {
                 )
             };
             unsafe { window.setReleasedWhenClosed(false) };
-            window.setTitle(&NSString::from_str("Typio Settings"));
+            window.setTitle(&NSString::from_str(tr(T::SettingsTitle)));
             window.center();
             Settings {
                 window,
@@ -208,6 +218,9 @@ pub fn update(mtm: MainThreadMarker, state: &UiState) {
 
 fn render(mtm: MainThreadMarker, settings: &Settings, state: &UiState) {
     let target = &*settings.target;
+    settings
+        .window
+        .setTitle(&NSString::from_str(tr(T::SettingsTitle)));
     let content = FlippedView::new(mtm, NSSize::new(WIDTH, HEIGHT));
     let tabs = NSTabView::initWithFrame(
         NSTabView::alloc(mtm),
@@ -215,9 +228,9 @@ fn render(mtm: MainThreadMarker, settings: &Settings, state: &UiState) {
     );
     let page = tabs.contentRect().size;
     for (title, view) in [
-        ("General", general_page(mtm, state, target, page)),
-        ("Datasets", datasets_page(mtm, state, target, page)),
-        ("Apps", apps_page(mtm, state, target, page)),
+        (tr(T::TabGeneral), general_page(mtm, state, target, page)),
+        (tr(T::TabDatasets), datasets_page(mtm, state, target, page)),
+        (tr(T::TabApps), apps_page(mtm, state, target, page)),
     ] {
         let item = unsafe { NSTabViewItem::initWithIdentifier(NSTabViewItem::alloc(), None) };
         item.setLabel(&NSString::from_str(title));
@@ -247,7 +260,7 @@ fn general_page(
         &view,
         &checkbox(
             mtm,
-            "Enable Typio in all text fields   ⌃⌥T",
+            tr(T::EnableEverywhere),
             state.enabled,
             target,
             sel!(toggleEnabled:),
@@ -259,7 +272,7 @@ fn general_page(
         &view,
         &label(
             mtm,
-            "Trigger character",
+            tr(T::TriggerCharacter),
             rect(PAGE_MARGIN, 53.0, 130.0, 18.0),
         ),
     );
@@ -286,7 +299,7 @@ fn general_page(
         &view,
         &secondary(
             mtm,
-            &format!("Type {}xtt to see suggestions for xtt", state.trigger),
+            &trf(T::TriggerHint, &[("trigger", &state.trigger.to_string())]),
             rect(PAGE_MARGIN + 204.0, 54.0, inner - 204.0, 16.0),
         ),
     );
@@ -295,29 +308,57 @@ fn general_page(
         &view,
         &secondary(
             mtm,
-            "Quick Search: press ⌃⌥Space in any text field to search every enabled dataset.",
-            rect(PAGE_MARGIN, 132.0, inner, 16.0),
+            tr(T::QuickSearchHint),
+            rect(PAGE_MARGIN, 168.0, inner, 16.0),
         ),
     );
 
+    add(
+        &view,
+        &label(
+            mtm,
+            tr(T::LanguageLabel),
+            rect(PAGE_MARGIN, 89.0, 130.0, 18.0),
+        ),
+    );
+    let language = NSPopUpButton::initWithFrame_pullsDown(
+        NSPopUpButton::alloc(mtm),
+        rect(PAGE_MARGIN + 130.0, 84.0, 160.0, 26.0),
+        false,
+    );
+    for option in Language::ALL {
+        language.addItemWithTitle(&NSString::from_str(option.title()));
+    }
+    if let Some(index) = Language::ALL
+        .iter()
+        .position(|&option| option == state.language)
+    {
+        language.selectItemAtIndex(index as isize);
+    }
+    unsafe {
+        language.setTarget(Some(target));
+        language.setAction(Some(sel!(changeLanguage:)));
+    }
+    add(&view, &language);
+
     let access = if state.trusted {
-        "Accessibility access: granted"
+        tr(T::AccessGranted)
     } else {
-        "Accessibility access: not granted"
+        tr(T::AccessMissing)
     };
     add(
         &view,
-        &label(mtm, access, rect(PAGE_MARGIN, 92.0, 240.0, 18.0)),
+        &label(mtm, access, rect(PAGE_MARGIN, 128.0, 260.0, 18.0)),
     );
     if !state.trusted {
         add(
             &view,
             &button(
                 mtm,
-                "Open Accessibility Settings…",
+                tr(T::OpenAccessibilitySettings),
                 target,
                 sel!(openAccessibilitySettings:),
-                rect(page.width - PAGE_MARGIN - 230.0, 86.0, 230.0, 28.0),
+                rect(page.width - PAGE_MARGIN - 230.0, 122.0, 230.0, 28.0),
             ),
         );
     }
@@ -336,7 +377,7 @@ fn datasets_page(
         &view,
         &secondary(
             mtm,
-            "Only checked datasets give suggestions.",
+            tr(T::DatasetsHint),
             rect(PAGE_MARGIN, 12.0, inner, 16.0),
         ),
     );
@@ -345,7 +386,7 @@ fn datasets_page(
         mtm,
         rect(PAGE_MARGIN, 36.0, inner, list_height),
         state.datasets.len(),
-        "No datasets yet. Click Import… to add a TXT, CSV or JSON file.",
+        tr(T::NoDatasetsHelp),
         |list, index, top, width| {
             let dataset = &state.datasets[index];
             let enable = checkbox(
@@ -372,7 +413,7 @@ fn datasets_page(
                 list,
                 &small_button(
                     mtm,
-                    "Edit…",
+                    tr(T::EditButton),
                     target,
                     sel!(editDataset:),
                     index,
@@ -383,7 +424,7 @@ fn datasets_page(
                 list,
                 &small_button(
                     mtm,
-                    "Delete",
+                    tr(T::DeleteButton),
                     target,
                     sel!(deleteDataset:),
                     index,
@@ -397,10 +438,10 @@ fn datasets_page(
     let buttons_top = 36.0 + list_height + 12.0;
     let mut x = PAGE_MARGIN - 6.0;
     for (title, action, width) in [
-        ("New…", sel!(newDataset:), 80.0),
-        ("Import…", sel!(importDataset:), 90.0),
-        ("Export Backup…", sel!(exportBackup:), 130.0),
-        ("Open Data Folder", sel!(openDataFolder:), 140.0),
+        (tr(T::NewButton), sel!(newDataset:), 90.0),
+        (tr(T::ImportButton), sel!(importDataset:), 90.0),
+        (tr(T::ExportBackup), sel!(exportBackup:), 130.0),
+        (tr(T::OpenDataFolder), sel!(openDataFolder:), 150.0),
     ] {
         add(
             &view,
@@ -428,14 +469,14 @@ fn apps_page(
 
     add(
         &view,
-        &label(mtm, "Typio runs in", rect(PAGE_MARGIN, 17.0, 100.0, 18.0)),
+        &label(mtm, tr(T::RunsIn), rect(PAGE_MARGIN, 17.0, 100.0, 18.0)),
     );
     let mode = NSPopUpButton::initWithFrame_pullsDown(
         NSPopUpButton::alloc(mtm),
         rect(PAGE_MARGIN + 100.0, 12.0, 240.0, 26.0),
         false,
     );
-    for title in ["All apps except skipped ones", "Only the selected apps"] {
+    for title in [tr(T::ModeAll), tr(T::ModeSelected)] {
         mode.addItemWithTitle(&NSString::from_str(title));
     }
     mode.selectItemAtIndex(match state.app_mode {
@@ -449,14 +490,8 @@ fn apps_page(
     add(&view, &mode);
 
     let (about, empty) = match state.app_mode {
-        AppMode::All => (
-            "Skipped apps. Browsers start here so the Typio extension handles them. You can also skip the app in use from the Typio menu.",
-            "Typio runs in every app.",
-        ),
-        AppMode::Selected => (
-            "Selected apps. Typio runs only in these. You can also add the app in use from the Typio menu.",
-            "No apps selected yet, so Typio runs nowhere. Click Add App…",
-        ),
+        AppMode::All => (tr(T::SkippedAbout), tr(T::SkippedEmpty)),
+        AppMode::Selected => (tr(T::SelectedAbout), tr(T::SelectedEmpty)),
     };
     let intro = secondary(mtm, about, rect(PAGE_MARGIN, 48.0, inner, 32.0));
     intro.setLineBreakMode(NSLineBreakMode::ByWordWrapping);
@@ -487,7 +522,7 @@ fn apps_page(
                 list,
                 &small_button(
                     mtm,
-                    "Remove",
+                    tr(T::RemoveButton),
                     target,
                     sel!(removeApp:),
                     index,
@@ -501,7 +536,7 @@ fn apps_page(
         &view,
         &button(
             mtm,
-            "Add App…",
+            tr(T::AddApp),
             target,
             sel!(addApp:),
             rect(PAGE_MARGIN - 6.0, 88.0 + list_height + 12.0, 110.0, 32.0),
@@ -517,7 +552,7 @@ fn add_apps(mtm: MainThreadMarker) {
     panel.setDirectoryURL(Some(&NSURL::fileURLWithPath(&NSString::from_str(
         "/Applications",
     ))));
-    panel.setMessage(Some(&NSString::from_str("Choose apps.")));
+    panel.setMessage(Some(&NSString::from_str(tr(T::ChooseApps))));
     if panel.runModal() != NSModalResponseOK {
         return;
     }
@@ -595,19 +630,17 @@ fn export_backup(mtm: MainThreadMarker) {
         return;
     };
     if let Err(error) = std::fs::write(path.to_string(), backup) {
-        menu::alert(mtm, "Typio could not save the backup", &error.to_string());
+        menu::alert(mtm, tr(T::BackupFailed), &error.to_string());
     }
 }
 
 fn confirm_delete(mtm: MainThreadMarker, name: &str) -> bool {
     let alert = NSAlert::new(mtm);
-    alert.setMessageText(&NSString::from_str(&format!("Delete “{name}”?")));
-    alert.setInformativeText(&NSString::from_str(
-        "Its values and shortcuts are removed from Typio. This cannot be undone.",
-    ));
-    let delete = alert.addButtonWithTitle(&NSString::from_str("Delete"));
+    alert.setMessageText(&NSString::from_str(&trf(T::DeleteTitle, &[("name", name)])));
+    alert.setInformativeText(&NSString::from_str(tr(T::DeleteInfo)));
+    let delete = alert.addButtonWithTitle(&NSString::from_str(tr(T::DeleteButton)));
     delete.setHasDestructiveAction(true);
-    alert.addButtonWithTitle(&NSString::from_str("Cancel"));
+    alert.addButtonWithTitle(&NSString::from_str(tr(T::CancelButton)));
     alert.runModal() == NSAlertFirstButtonReturn
 }
 

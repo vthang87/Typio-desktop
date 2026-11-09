@@ -21,6 +21,7 @@ macro_rules! debug {
 mod controller;
 #[cfg(target_os = "macos")]
 mod editor;
+mod i18n;
 mod log;
 #[cfg(target_os = "macos")]
 mod menu;
@@ -42,21 +43,26 @@ fn main() {
     // A menu bar app: no Dock icon and no main menu.
     app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
 
+    i18n::set(i18n::Language::System);
     let store = match store::Store::load(&store::Store::data_dir()) {
         Ok(store) => store,
         Err(error) => {
             // Never overwrite data Typio cannot read.
             menu::alert(
                 mtm,
-                "Typio could not read its data",
-                &format!(
-                    "{error}\n\nThe file is in {}.",
-                    store::Store::data_dir().display()
+                i18n::tr(i18n::T::CannotReadData),
+                &i18n::trf(
+                    i18n::T::DataFileIn,
+                    &[
+                        ("error", &error.to_string()),
+                        ("path", &store::Store::data_dir().display().to_string()),
+                    ],
                 ),
             );
             return;
         }
     };
+    i18n::set(store.language);
     controller::install(store, mtm);
     menu::install(mtm);
     menu::install_edit_menu(mtm);
